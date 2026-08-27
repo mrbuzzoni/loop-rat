@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# rat-agent - the one place in the harness that talks to a model.
+#
+#   printf 'do the thing' | rat-agent --tag act
+#
+# Reads a prompt on stdin, prints the model's answer on stdout, and files the
+# raw response next to the receipt. Cost is added to today's ledger. If no agent
+# binary is installed, or RAT_DRY_RUN=1, it returns a stub so every other part of
+# the pipeline stays testable on a laptop with no API key.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+. "$HERE/lib/common.sh"
+
+TAG="agent"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --tag) TAG="$2"; shift 2 ;;
+    --help|-h) awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"; exit 0 ;;
+    *) rat_err "rat-agent: unknown argument $1"; exit 2 ;;
+  esac
+done
+
+PROMPT="$(cat)"
+OUT_DIR="${RAT_RECEIPT:-$RAT_STATE_DIR/scratch}"
+mkdir -p "$OUT_DIR"
+RAW="$OUT_DIR/agent-$TAG.json"
+
+AGENT_CMD="$(rat_setting agent.command claude)"
+RESULT_FIELD="$(rat_setting agent.result_field result)"
+COST_FIELD="$(rat_setting agent.cost_field total_cost_usd)"
+
+read_args() {
+  rat_py - "$RAT_SETTINGS" <<'PY'
+import json, shlex, sys
+with open(sys.argv[1]) as fh:
+    settings = json.load(fh)
+print(" ".join(shlex.quote(a) for a in settings.get("agent", {}).get("args", [])))
+PY
+}
+
+stub() {
+  rat_py - "$RAW" "$1" <<'PY'
+import json, sys
+path, reason = sys.argv[1], sys.argv[2]
+payload = {
+    "result": "[dry run] %s - no model was called. "
+              "The harness ran every other phase for real." % reason,
+    "total_cost_usd": 0.0,
+    "num_turns": 0,
+    "is_dry_run": True,
+}
+with open(path, "w") as fh:
+    json.dump(payload, fh, indent=2)
+print(payload["result"])
+PY
+}
+
+# The per-shift cap stops the next call, not the one already in flight. A loop
+# that asks the model twice cannot walk past its ceiling on the second question.
+if [ -n "${RAT_MAX_USD:-}" ] && [ -d "$OUT_DIR" ]; then
+  SPENT_THIS_SHIFT="$(rat_py "$RAT_ROOT/bin/lib/sum_cost.py" "$OUT_DIR")"
+  if rat_py -c 'import sys; sys.exit(0 if float(sys.argv[1]) >= float(sys.argv[2]) else 1)' \
+       "$SPENT_THIS_SHIFT" "$RAT_MAX_USD"; then
+    rat_err "rat-agent: this shift has spent \$$SPENT_THIS_SHIFT of its \$$RAT_MAX_USD cap"
+    printf '**The shift hit its spend cap.**\n\n$%s of $%s used before this call.\n' \
+      "$SPENT_THIS_SHIFT" "$RAT_MAX_USD"
+    rat_trace agent capped "spent=$SPENT_THIS_SHIFT cap=$RAT_MAX_USD tag=$TAG"
+    exit 1
+  fi
+fi
+
+if [ "${RAT_DRY_RUN:-0}" = "1" ]; then
+  stub "RAT_DRY_RUN=1"
+  exit 0
+fi
+
+if ! command -v "$AGENT_CMD" >/dev/null 2>&1; then
+  rat_warn "rat-agent: '$AGENT_CMD' is not on PATH - falling back to a dry run"
+  stub "'$AGENT_CMD' not installed"
+  exit 0
+fi
+
+# read_args prints shell-quoted words, so eval is what makes an argument with a
+# space in it survive - plain word splitting would tear it in half.
+eval "ARGS=($(read_args))"
+AGENT_RC=0
+printf '%s' "$PROMPT" | "$AGENT_CMD" "${ARGS[@]}" > "$RAW" 2> "$OUT_DIR/agent-$TAG.stderr" || AGENT_RC=$?
+if [ "$AGENT_RC" -ne 0 ]; then
+  # Do not bail yet: the response body usually explains the failure, and that
+  # explanation belongs in the receipt rather than in a log nobody opens.
+  rat_err "rat-agent: $AGENT_CMD exited $AGENT_RC"
+fi
+
+COST_FILE="$OUT_DIR/agent-$TAG.cost"
+RC=0
+rat_py "$RAT_ROOT/bin/lib/agent_result.py" "$RAW" "$COST_FILE" "$RESULT_FIELD" "$COST_FIELD" || RC=$?
+if [ "$AGENT_RC" -ne 0 ] && [ "$RC" -eq 0 ]; then RC="$AGENT_RC"; fi
+
+rat_budget_add "$(cat "$COST_FILE" 2>/dev/null || echo 0)" "${RAT_LOOP:-unknown}"
+exit "$RC"

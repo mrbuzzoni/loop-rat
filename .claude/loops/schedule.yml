@@ -1,0 +1,29 @@
+# When each loop fires.
+#
+#   every:   15m | 4h | 1d          how often the loop is eligible to run
+#   at:      "03:30"                for hourly and daily loops, the minute/hour
+#   window:  "09:00-19:00"          local-time hours it may run at all
+#   days:    mon-fri | all | sat    days it may run
+#   enabled: false                  pause without deleting anything
+#
+# `bin/rat run-due` reads this file and the checkpoint, and runs what is due.
+# `bin/rat cron` turns it into crontab lines. Changing this file changes both.
+
+loops:
+  - name: pr-hunter
+    every: 30m
+    window: "09:00-19:00"
+    days: mon-fri
+    enabled: true
+
+  - name: test-mender
+    every: 4h
+    window: "20:00-07:00"
+    days: all
+    enabled: true
+
+  - name: digest
+    every: 1d
+    at: "06:45"
+    days: mon-fri
+    enabled: true

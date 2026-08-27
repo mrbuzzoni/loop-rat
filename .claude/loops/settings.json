@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "agent": {
+    "command": "claude",
+    "args": ["-p", "--output-format", "json", "--permission-mode", "acceptEdits"],
+    "result_field": "result",
+    "cost_field": "total_cost_usd"
+  },
+  "caps": {
+    "max_usd_per_shift": 1.00,
+    "max_usd_per_day": 5.00,
+    "timeout_seconds": 900,
+    "max_files_changed": 10
+  },
+  "guard": {
+    "scan_secrets": true,
+    "denylist": [
+      "**/.env",
+      "**/.env.*",
+      "**/secrets/**",
+      "**/credentials/**",
+      "**/*_key*",
+      "**/*_secret*",
+      "**/id_rsa*",
+      "**/migrations/**",
+      "**/auth/**",
+      "**/billing/**",
+      "**/payments/**",
+      "**/.github/workflows/**",
+      "**/terraform/**",
+      "**/k8s/production/**",
+      "package-lock.json",
+      "yarn.lock",
+      "pnpm-lock.yaml"
+    ]
+  },
+  "grading": {
+    "mode": "auto"
+  },
+  "receipts": {
+    "keep_days": 30
+  }
+}

@@ -1,0 +1,284 @@
+#!/usr/bin/env bash
+# shift - run one shift of one loop, end to end.
+#
+#   bin/shift pr-hunter [--dry-run] [--prompt-only]
+#
+# Phases: preflight -> act -> verify -> guard -> grade -> receipt.
+# Every phase appends to state/trace.log. The shift leaves behind one receipt
+# folder whether it succeeded, failed, or was stopped.
+#
+# Exit codes: 0 pass  2 needs review  3 blocked by guard  4 verify failed
+#             75 skipped (halted, locked, or out of budget)  1 harness error
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+. "$HERE/lib/common.sh"
+
+PROMPT_ONLY=0
+RAT_LOOP=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run)     export RAT_DRY_RUN=1; shift ;;
+    --prompt-only) PROMPT_ONLY=1; shift ;;
+    -h|--help)     awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"; exit 0 ;;
+    -*)            rat_err "shift: unknown flag $1"; exit 2 ;;
+    *)             RAT_LOOP="$1"; shift ;;
+  esac
+done
+
+[ -n "$RAT_LOOP" ] || { rat_err "usage: bin/shift <loop-name> [--dry-run]"; exit 2; }
+export RAT_LOOP
+
+LOOP_DIR="$RAT_LOOPS_DIR/$RAT_LOOP"
+PLAN="$LOOP_DIR/plan.md"
+ACT="$LOOP_DIR/act.sh"
+[ -f "$RAT_ROOT/CONTRACT.md" ] || {
+  rat_err "no CONTRACT.md at $RAT_ROOT - a shift without rules is not a shift"
+  exit 1
+}
+[ -f "$PLAN" ] || { rat_err "no plan for '$RAT_LOOP' (expected $PLAN)"; exit 1; }
+[ -x "$ACT" ]  || { rat_err "no executable act.sh for '$RAT_LOOP' (expected $ACT)"; exit 1; }
+
+# ---------------------------------------------------------------- preflight --
+if rat_halted; then
+  rat_warn "halted: $(head -n 1 "$RAT_HALT" 2>/dev/null)"
+  rat_trace preflight skipped "reason=halt"
+  exit 75
+fi
+
+TIMEOUT="$(rat_py "$RAT_CONF" fm-get "$PLAN" timeout 2>/dev/null || true)"
+[ -n "$TIMEOUT" ] || TIMEOUT="$(rat_setting caps.timeout_seconds 900)"
+MAX_USD="$(rat_py "$RAT_CONF" fm-get "$PLAN" max_usd 2>/dev/null || true)"
+[ -n "$MAX_USD" ] || MAX_USD="$(rat_setting caps.max_usd_per_shift 1.00)"
+DAY_CAP="$(rat_setting caps.max_usd_per_day 5.00)"
+RUBRICS="$(rat_py "$RAT_CONF" fm-get "$PLAN" rubrics 2>/dev/null | tr -d '[]"' | tr ',' ' ' || true)"
+VERIFY_CMD="$(rat_py "$RAT_CONF" fm-get "$PLAN" verify 2>/dev/null || true)"
+
+SPENT_TODAY="$(rat_budget_today)"
+if rat_py -c "import sys; sys.exit(0 if float(sys.argv[1]) >= float(sys.argv[2]) else 1)" "$SPENT_TODAY" "$DAY_CAP"; then
+  rat_warn "daily budget spent ($SPENT_TODAY of $DAY_CAP) - not starting a shift"
+  rat_trace preflight skipped "reason=budget spent=$SPENT_TODAY cap=$DAY_CAP"
+  exit 75
+fi
+
+if ! rat_lock "$RAT_LOOP" "$((TIMEOUT + 120))"; then
+  rat_warn "a $RAT_LOOP shift is already running - skipping this one"
+  rat_trace preflight skipped "reason=locked"
+  exit 75
+fi
+trap 'rat_unlock "$RAT_LOOP"' EXIT
+
+RAT_SHIFT_ID="$(date +%H%M%S)"
+export RAT_SHIFT_ID
+RAT_RECEIPT="$RAT_STATE_DIR/receipts/$(rat_today)/$RAT_SHIFT_ID-$RAT_LOOP"
+export RAT_RECEIPT
+mkdir -p "$RAT_RECEIPT"
+STARTED_EPOCH="$(rat_epoch)"
+STARTED_ISO="$(rat_now_iso)"
+
+rat_trace preflight ok "timeout=${TIMEOUT}s cap=\$$MAX_USD dry=${RAT_DRY_RUN:-0}"
+
+# ------------------------------------------------------------------ prompt --
+{
+  echo "# Shift brief: $RAT_LOOP"
+  echo
+  echo "Shift id: $RAT_SHIFT_ID   started: $STARTED_ISO"
+  echo "Receipt folder: $RAT_RECEIPT"
+  echo
+  echo "## The contract"
+  echo
+  cat "$RAT_ROOT/CONTRACT.md"
+  if [ -f "$RAT_ROOT/contract.local.md" ]; then
+    echo
+    echo "## Local overrides (these win over the contract above)"
+    echo
+    cat "$RAT_ROOT/contract.local.md"
+  fi
+  for rubric in $RUBRICS; do
+    if [ -f "$RAT_LOOPS_DIR/rubrics/$rubric.md" ]; then
+      echo
+      echo "## You will be graded against rubrics/$rubric.md"
+      echo
+      cat "$RAT_LOOPS_DIR/rubrics/$rubric.md"
+    fi
+  done
+  if [ -f "$RAT_CHECKPOINT" ]; then
+    echo
+    echo "## Where the last shift stopped"
+    echo
+    echo '```json'
+    rat_py "$RAT_CONF" get "$RAT_CHECKPOINT" "loops.$RAT_LOOP" 2>/dev/null || echo '{}'
+    echo '```'
+  fi
+  echo
+  echo "## The job"
+  echo
+  rat_py "$RAT_CONF" body "$PLAN"
+} > "$RAT_RECEIPT/prompt.md"
+
+if [ "$PROMPT_ONLY" = "1" ]; then
+  cat "$RAT_RECEIPT/prompt.md"
+  exit 0
+fi
+
+# --------------------------------------------------------------------- act --
+export RAT_PLAN="$PLAN"
+export RAT_TIMEOUT="$TIMEOUT"
+export RAT_MAX_USD="$MAX_USD"
+export PATH="$RAT_ROOT/bin:$PATH"
+
+rat_py "$RAT_ROOT/bin/lib/guard.py" --snapshot "$RAT_RECEIPT/tree-before.txt" || true
+
+ACT_START="$(rat_epoch)"
+rat_run_timeout "$TIMEOUT" "$ACT" > "$RAT_RECEIPT/output.md" 2> "$RAT_RECEIPT/stderr.log"
+ACT_RC=$?
+ACT_SECONDS=$(( $(rat_epoch) - ACT_START ))
+
+if [ "$ACT_RC" -eq 143 ] || [ "$ACT_RC" -eq 137 ]; then
+  rat_trace act timeout "after=${ACT_SECONDS}s"
+  ACT_STATUS="timeout"
+elif [ "$ACT_RC" -ne 0 ]; then
+  rat_trace act error "rc=$ACT_RC after=${ACT_SECONDS}s"
+  ACT_STATUS="error"
+else
+  rat_trace act ok "after=${ACT_SECONDS}s"
+  ACT_STATUS="ok"
+fi
+
+# ------------------------------------------------------------------ verify --
+VERIFY_STATUS="skipped"
+if [ -n "$VERIFY_CMD" ] && [ "$ACT_STATUS" = "ok" ]; then
+  if ( cd "$RAT_ROOT" && rat_run_timeout "$TIMEOUT" bash -c "$VERIFY_CMD" ) \
+       > "$RAT_RECEIPT/verify.log" 2>&1; then
+    VERIFY_STATUS="pass"
+  else
+    VERIFY_STATUS="fail"
+  fi
+  rat_trace verify "$VERIFY_STATUS" "cmd=$(printf '%s' "$VERIFY_CMD" | cut -c1-60)"
+fi
+
+# ------------------------------------------------------------------- guard --
+GUARD_STATUS="ok"
+if rat_py "$RAT_ROOT/bin/lib/guard.py" "$RAT_SETTINGS" "$RAT_RECEIPT/tree-before.txt" > "$RAT_RECEIPT/guard.json" 2>>"$RAT_RECEIPT/stderr.log"; then
+  rat_trace guard ok ""
+else
+  GUARD_STATUS="blocked"
+  rat_trace guard blocked "see guard.json"
+fi
+CHANGED="$(rat_json_field "$RAT_RECEIPT/guard.json" checked 0)"
+if [ "${CHANGED:-0}" != "0" ] && git -C "$RAT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  git -C "$RAT_ROOT" diff > "$RAT_RECEIPT/diff.patch" 2>/dev/null || true
+fi
+
+# ------------------------------------------------------------------- grade --
+GRADE_MODE="$(rat_setting grading.mode auto)"
+if [ "$GUARD_STATUS" = "blocked" ]; then
+  VERDICT="blocked"
+elif [ "$ACT_STATUS" != "ok" ]; then
+  VERDICT="fail"
+elif [ "$VERIFY_STATUS" = "fail" ]; then
+  VERDICT="fail"
+elif [ -n "$RUBRICS" ] && [ "$GRADE_MODE" != "off" ]; then
+  {
+    echo "You are the grader for a shift that already ran. You did not do the work."
+    echo "Read the rubrics, then the shift output, then answer."
+    echo
+    for rubric in $RUBRICS; do
+      [ -f "$RAT_LOOPS_DIR/rubrics/$rubric.md" ] || continue
+      echo "### rubric: $rubric"
+      cat "$RAT_LOOPS_DIR/rubrics/$rubric.md"
+      echo
+    done
+    echo "### what the shift was asked to do"
+    rat_py "$RAT_CONF" body "$PLAN"
+    echo
+    echo "### what the shift reported"
+    head -c 20000 "$RAT_RECEIPT/output.md"
+    echo
+    if [ -s "$RAT_RECEIPT/diff.patch" ]; then
+      echo "### the diff it left behind"
+      head -c 20000 "$RAT_RECEIPT/diff.patch"
+    fi
+    echo
+    echo "Reply with one JSON object and nothing else:"
+    echo '{"verdict":"pass|needs-review|fail","score":0-100,"notes":"one or two sentences","fix_first":"the single most important thing to change, or empty"}'
+  } | "$RAT_ROOT/bin/rat-agent" --tag grade > "$RAT_RECEIPT/grade.raw" 2>>"$RAT_RECEIPT/stderr.log"
+
+  VERDICT="$(rat_py - "$RAT_RECEIPT/grade.raw" "$RAT_RECEIPT/grade.json" <<'PY'
+import json, re, sys
+raw = open(sys.argv[1]).read()
+match = re.search(r"\{.*\}", raw, re.S)
+grade = {"verdict": "needs-review", "score": None, "notes": "grader returned no usable JSON"}
+if match:
+    try:
+        parsed = json.loads(match.group(0))
+        if isinstance(parsed, dict) and parsed.get("verdict"):
+            grade = parsed
+    except ValueError:
+        pass
+if "[dry run]" in raw:
+    grade = {"verdict": "needs-review", "score": None, "notes": "dry run - no grader was called"}
+with open(sys.argv[2], "w") as fh:
+    json.dump(grade, fh, indent=2)
+    fh.write("\n")
+print(grade["verdict"])
+PY
+)"
+  rat_trace grade "$VERDICT" "score=$(rat_json_field "$RAT_RECEIPT/grade.json" score -)"
+else
+  VERDICT="pass"
+fi
+
+# ----------------------------------------------------------------- receipt --
+ENDED_EPOCH="$(rat_epoch)"
+COST="$(rat_py "$RAT_ROOT/bin/lib/sum_cost.py" "$RAT_RECEIPT")"
+
+RAT_ACT_STATUS="$ACT_STATUS" RAT_ACT_RC="$ACT_RC" RAT_ACT_SECONDS="$ACT_SECONDS" \
+RAT_VERIFY_STATUS="$VERIFY_STATUS" RAT_VERIFY_CMD="$VERIFY_CMD" \
+RAT_GUARD_STATUS="$GUARD_STATUS" RAT_CHANGED="${CHANGED:-0}" \
+RAT_VERDICT="$VERDICT" RAT_COST="$COST" \
+RAT_STARTED="$STARTED_ISO" RAT_ENDED="$(rat_now_iso)" \
+RAT_DURATION="$(( ENDED_EPOCH - STARTED_EPOCH ))" \
+rat_py "$RAT_ROOT/bin/lib/write_receipt.py"
+
+rat_with_lock checkpoint rat_py - "$RAT_CHECKPOINT" "$RAT_LOOP" "$RAT_RECEIPT" "$VERDICT" "$STARTED_EPOCH" "$RAT_RECEIPT/cursor.json" <<'PY'
+import json, os, sys
+path, loop, receipt, verdict, started, cursor_path = sys.argv[1:7]
+data = {"loops": {}}
+if os.path.exists(path):
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+    except ValueError:
+        pass
+data.setdefault("loops", {})
+entry = data["loops"].setdefault(loop, {})
+entry.update({
+    "last_receipt": os.path.relpath(receipt, os.path.dirname(os.path.dirname(path))),
+    "last_verdict": verdict,
+    "last_started_epoch": int(started),
+})
+if os.path.exists(cursor_path):          # act.sh may leave a resume cursor
+    try:
+        with open(cursor_path) as fh:
+            entry["cursor"] = json.load(fh)
+    except ValueError:
+        pass
+with open(path, "w") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+PY
+
+rat_trace receipt "$VERDICT" "cost=\$$COST dir=${RAT_RECEIPT#"$RAT_ROOT"/}"
+
+printf '%s %s  %s  %ss  $%s  %s\n' \
+  "$(rat_color 1)$RAT_LOOP$(rat_color 0)" "$RAT_SHIFT_ID" "$VERDICT" \
+  "$(( ENDED_EPOCH - STARTED_EPOCH ))" "$COST" "${RAT_RECEIPT#"$RAT_ROOT"/}"
+
+case "$VERDICT" in
+  pass)         exit 0 ;;
+  blocked)      exit 3 ;;
+  fail)         [ "$VERIFY_STATUS" = "fail" ] && exit 4; exit 2 ;;
+  *)            exit 2 ;;
+esac

@@ -1,0 +1,24 @@
+{
+  "//": "Tools a shift is allowed to touch. Anything not listed here does not exist as far as a shift is concerned. Start read-only; widen one server at a time, and only after a week of receipts you were happy with.",
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}",
+        "GITHUB_TOOLSETS": "repos,issues,pull_requests",
+        "GITHUB_READ_ONLY": "1"
+      }
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "${PWD}/src",
+        "${PWD}/test",
+        "${PWD}/state"
+      ]
+    }
+  }
+}

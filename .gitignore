@@ -1,0 +1,13 @@
+# Your rules, not the team's. Appended to every prompt, never committed.
+contract.local.md
+
+# Everything a shift produced: receipts, traces, the checkpoint, the ledger,
+# locks, the halt file. Evidence, not source. Delete it all and the next shift
+# rebuilds what it needs - you lose the history, never the setup.
+state/*
+!state/.gitkeep
+
+# Local noise
+__pycache__/
+*.pyc
+.DS_Store

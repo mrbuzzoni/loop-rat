@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+# rat - front door for the loop rat harness.
+#
+#   rat list                 what is scheduled, and whether it is paused
+#   rat run <name>           run one shift now
+#   rat run-due              run every loop the schedule says is due (cron uses this)
+#   rat status               last verdict per loop, today's spend, halt state
+#   rat receipts [n]         the last n receipts, newest first
+#   rat show [receipt]       read one receipt in full
+#   rat trace [n]            tail the trace log
+#   rat new <name>           scaffold a new loop from the template
+#   rat cron                 print crontab lines for the current schedule
+#   rat doctor               check the setup before you trust it overnight
+#   rat resume               clear the halt file left by kill.sh
+#   rat version              which rat this is
+#
+# Every command reads state/ and .claude/loops/ relative to this file, so it
+# does not matter which directory you call it from.
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+. "$HERE/lib/common.sh"
+
+RAT_VERSION="0.3.2"
+SCHEDULE="$RAT_LOOPS_DIR/schedule.yml"
+SCHED_PY="$RAT_ROOT/bin/lib/schedule.py"
+
+usage() { awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"; }
+
+cmd_list() {
+  printf '%-16s %-8s %-14s %-9s %s\n' LOOP EVERY WINDOW DAYS STATE
+  rat_py "$SCHED_PY" list "$SCHEDULE" | while IFS=$'\t' read -r name every window days state; do
+    printf '%-16s %-8s %-14s %-9s %s\n' "$name" "$every" "$window" "$days" "$state"
+  done
+}
+
+cmd_run_due() {
+  local ran=0 name
+  while read -r name; do
+    [ -n "$name" ] || continue
+    ran=1
+    "$RAT_ROOT/bin/shift" "$name" "$@" || true
+  done < <(rat_py "$SCHED_PY" due "$SCHEDULE" "$RAT_CHECKPOINT")
+  [ "$ran" = "1" ] || rat_say "nothing due right now"
+}
+
+cmd_status() {
+  if rat_halted; then
+    rat_err "HALTED - $(head -n 1 "$RAT_HALT")"
+    echo "  clear it with: loop resume"
+    echo
+  fi
+  local spent cap
+  spent="$(rat_budget_today)"
+  cap="$(rat_setting caps.max_usd_per_day 5.00)"
+  printf 'today  $%s spent of $%s cap\n' "$spent" "$(printf '%.2f' "$cap")"
+  printf 'shifts %s receipts kept, %s day(s) on disk\n' \
+    "$(find "$RAT_STATE_DIR/receipts" -name receipt.json 2>/dev/null | wc -l | tr -d ' ')" \
+    "$(find "$RAT_STATE_DIR/receipts" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+  echo
+  printf '%-16s %-14s %-20s %s\n' LOOP LAST_VERDICT LAST_RUN RECEIPT
+  rat_py - "$RAT_CHECKPOINT" <<'PY'
+import json, os, signal, sys, time
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)   # `rat status | head` is fine
+path = sys.argv[1]
+if not os.path.exists(path):
+    print("(no shift has run yet)")
+    raise SystemExit(0)
+with open(path) as fh:
+    loops = json.load(fh).get("loops", {})
+for name, entry in sorted(loops.items()):
+    when = entry.get("last_started_epoch")
+    when = time.strftime("%Y-%m-%d %H:%M", time.localtime(when)) if when else "-"
+    print("%-16s %-14s %-20s %s" % (
+        name, entry.get("last_verdict", "-"), when, entry.get("last_receipt", "-")))
+PY
+}
+
+cmd_receipts() {
+  local limit="${1:-10}"
+  if [ -z "$(find "$RAT_STATE_DIR/receipts" -name receipt.json 2>/dev/null | head -n 1)" ]; then
+    rat_say "no receipts yet - try: bin/shift digest --dry-run"
+    return 0
+  fi
+  find "$RAT_STATE_DIR/receipts" -name receipt.json 2>/dev/null | sort -r | head -n "$limit" |
+  while read -r file; do
+    rat_py - "$file" <<'PY'
+import json, os, signal, sys
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+with open(sys.argv[1]) as fh:
+    r = json.load(fh)
+folder = os.path.dirname(sys.argv[1])
+print("%-11s %-14s %-13s %5ss  $%-8.4f %s" % (
+    os.path.basename(os.path.dirname(folder)),      # the local date it ran
+    r.get("loop", ""), r.get("verdict", ""),
+    r.get("duration_seconds", 0), float(r.get("cost_usd", 0) or 0),
+    os.path.basename(folder)))
+PY
+  done
+}
+
+cmd_show() {
+  local dir="${1:-}"
+  if [ -z "$dir" ]; then
+    local newest
+    newest="$(find "$RAT_STATE_DIR/receipts" -name receipt.json 2>/dev/null | sort | tail -n 1)"
+    if [ -z "$newest" ]; then
+      rat_err "no receipts yet - try: bin/shift digest --dry-run"
+      return 1
+    fi
+    dir="$(dirname "$newest")"
+  fi
+  [ -d "$dir" ] && [ -f "$dir/receipt.json" ] || { rat_err "no receipt at: $dir"; return 1; }
+  rat_say "== $dir"
+  echo; cat "$dir/receipt.json"
+  echo; rat_say "-- what it reported"; head -n 60 "$dir/output.md" 2>/dev/null
+  if [ -s "$dir/grade.json" ]; then echo; rat_say "-- how it was graded"; cat "$dir/grade.json"; fi
+  if [ -s "$dir/guard.json" ]; then echo; rat_say "-- what the guard saw"; head -n 30 "$dir/guard.json"; fi
+}
+
+cmd_new() {
+  local name="${1:-}"
+  [ -n "$name" ] || { rat_err "usage: loop new <name>"; return 2; }
+  local dir="$RAT_LOOPS_DIR/$name"
+  [ -d "$dir" ] && { rat_err "$name already exists"; return 1; }
+  mkdir -p "$dir"
+  sed "s/__NAME__/$name/g" "$RAT_LOOPS_DIR/_template/plan.md" > "$dir/plan.md"
+  sed "s/__NAME__/$name/g" "$RAT_LOOPS_DIR/_template/act.sh"  > "$dir/act.sh"
+  chmod +x "$dir/act.sh"
+  rat_say "created $dir"
+  echo "next: edit plan.md, then add it to .claude/loops/schedule.yml"
+  echo "test it without a model:  bin/shift $name --dry-run"
+}
+
+cmd_doctor() {
+  local problems=0
+  check() {
+    if eval "$2" >/dev/null 2>&1; then
+      printf '  ok    %s\n' "$1"
+    else
+      printf '  FAIL  %s\n' "$1"; problems=$((problems + 1))
+    fi
+  }
+  rat_say "harness"
+  check "python3 on PATH"                 "command -v python3"
+  check "git on PATH"                     "command -v git"
+  check "CONTRACT.md exists"              "test -s '$RAT_ROOT/CONTRACT.md'"
+  check "settings.json parses"            "python3 -c \"import json;json.load(open('$RAT_SETTINGS'))\""
+  check "schedule.yml parses"             "rat_py '$SCHED_PY' list '$SCHEDULE'"
+  check "state/ is writable"              "touch '$RAT_STATE_DIR/.probe' && rm -f '$RAT_STATE_DIR/.probe'"
+  check "kill.sh is executable"           "test -x '$RAT_ROOT/kill.sh'"
+  check "local overrides stay untracked"  "git -C '$RAT_ROOT' check-ignore -q contract.local.md || ! git -C '$RAT_ROOT' rev-parse --git-dir"
+
+  rat_say "loops"
+  rat_py "$SCHED_PY" list "$SCHEDULE" | while IFS=$'\t' read -r name _ _ _ _; do
+    local dir="$RAT_LOOPS_DIR/$name"
+    if [ -f "$dir/plan.md" ] && [ -x "$dir/act.sh" ]; then
+      printf '  ok    %s (plan + act.sh)\n' "$name"
+    else
+      printf '  FAIL  %s is scheduled but has no plan.md or act.sh\n' "$name"
+    fi
+  done
+
+  rat_say "model"
+  local agent; agent="$(rat_setting agent.command claude)"
+  if command -v "$agent" >/dev/null 2>&1; then
+    printf '  ok    %s found at %s\n' "$agent" "$(command -v "$agent")"
+  else
+    printf '  warn  %s not on PATH - shifts will run as dry runs\n' "$agent"
+  fi
+
+  echo
+  if [ "$problems" -eq 0 ]; then
+    rat_say "no blocking problems. try: bin/shift digest --dry-run"
+  else
+    rat_err "$problems problem(s) above"
+    return 1
+  fi
+}
+
+cmd_resume() {
+  [ -f "$RAT_HALT" ] || { rat_say "not halted"; return 0; }
+  rm -f "$RAT_HALT"
+  rat_trace resume ok "by=${USER:-unknown}"
+  rat_say "halt cleared - the next scheduled shift will run"
+}
+
+case "${1:-}" in
+  list)      shift; cmd_list "$@" ;;
+  run)       shift; "$RAT_ROOT/bin/shift" "$@" ;;
+  run-due)   shift; cmd_run_due "$@" ;;
+  status)    shift; cmd_status "$@" ;;
+  receipts)  shift; cmd_receipts "$@" ;;
+  show)      shift; cmd_show "$@" ;;
+  trace)     shift; tail -n "${1:-20}" "$RAT_TRACE" 2>/dev/null || rat_say "no trace yet" ;;
+  new)       shift; cmd_new "$@" ;;
+  cron)      shift; rat_py "$SCHED_PY" cron "$SCHEDULE" "$RAT_ROOT" ;;
+  doctor)    shift; cmd_doctor "$@" ;;
+  resume)    shift; cmd_resume "$@" ;;
+  -v|--version|version) printf 'loop rat %s\n' "$RAT_VERSION" ;;
+  ""|-h|--help|help) usage ;;
+  *)         rat_err "unknown command: $1"; echo; usage; exit 2 ;;
+esac

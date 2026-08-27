@@ -1,0 +1,71 @@
+# One shift, on GitHub's schedule instead of your laptop's.
+#
+# Two things differ from a local run: the checkout is fresh, so a loop that
+# relies on a cursor gets it from the committed state or not at all; and the
+# runner has no credentials beyond the secrets you hand it here.
+#
+# It uploads the receipt as an artifact and opens nothing. Turning the result
+# into a PR is a decision, and decisions belong to you.
+name: nightly shift
+
+on:
+  schedule:
+    - cron: "45 4 * * 1-5"      # 04:45 UTC, weekdays
+  workflow_dispatch:
+    inputs:
+      loop:
+        description: which loop to run
+        default: digest
+        type: string
+      dry_run:
+        description: run every phase with the model stubbed
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  shift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install the agent cli
+        if: ${{ inputs.dry_run != true }}
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: check the setup
+        run: bin/rat doctor
+
+      - name: run the shift
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LOOP="${{ inputs.loop || 'digest' }}"
+          if [ "${{ inputs.dry_run || 'false' }}" = "true" ]; then
+            bin/shift "$LOOP" --dry-run
+          else
+            bin/shift "$LOOP"
+          fi
+        continue-on-error: true
+
+      - name: the receipt
+        run: |
+          bin/rat receipts 5
+          bin/rat show
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: receipt
+          path: state/receipts/
+          retention-days: 14

@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# smoke.sh - proves the rat works without spending a cent.
+#
+# Copies the harness into a scratch directory and runs every phase there for
+# real: locks, timeouts, the guard, receipts, the checkpoint, the budget ledger,
+# the kill switch. Only the model call is stubbed. If this passes, the one thing
+# left untested is the model's judgment.
+#
+#   tests/smoke.sh
+set -u
+
+# Never inherit a parent harness's environment: this test must act on its own
+# scratch copy and nothing else.
+unset RAT_ROOT RAT_LOOP RAT_SHIFT_ID RAT_RECEIPT RAT_DRY_RUN RAT_PLAN RAT_TIMEOUT RAT_MAX_USD
+
+SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LAB="$(mktemp -d)"
+trap 'rm -rf "$LAB"' EXIT
+
+cp -R "$SRC/bin" "$SRC/.claude" "$SRC/CONTRACT.md" "$SRC/kill.sh" "$LAB/"
+mkdir -p "$LAB/tests"
+cp "$SRC/tests/at_rule.py" "$LAB/tests/"
+mkdir -p "$LAB/state"
+cd "$LAB"
+git init -q . 2>/dev/null
+git -C "$LAB" add -A >/dev/null 2>&1
+git -C "$LAB" -c user.email=smoke@test -c user.name=smoke commit -qm baseline >/dev/null 2>&1
+
+PASS=0
+FAIL=0
+pass()    { printf '  ok    %s\n' "$1"; PASS=$((PASS + 1)); }
+fail()    { printf '  FAIL  %s\n' "$1"; FAIL=$((FAIL + 1)); }
+check() {
+  local out
+  if out="$(eval "$2" 2>&1)"; then
+    pass "$1"
+  else
+    fail "$1"
+    [ -n "$out" ] && printf '%s\n' "$out" | head -n 5 | sed 's/^/          /'
+  fi
+}
+section() { printf '\n%s\n' "$1"; }
+
+section "parsers"
+check "settings.json is readable"          "python3 bin/lib/conf.py get .claude/loops/settings.json caps.timeout_seconds"
+check "plan front matter parses"           "python3 bin/lib/conf.py fm-get .claude/loops/digest/plan.md rubrics | grep -q writing"
+check "plan body separates from matter"    "python3 bin/lib/conf.py body .claude/loops/digest/plan.md | grep -q 'reads the other loops'"
+check "every scheduled loop is listed"     "test \"\$(python3 bin/lib/schedule.py list .claude/loops/schedule.yml | wc -l | tr -d ' ')\" -ge 3"
+check "cron installs one run-due tick"     "test \"\$(python3 bin/lib/schedule.py cron .claude/loops/schedule.yml \"\$PWD\" | grep -c 'bin/rat run-due')\" -eq 1"
+check "cron lists the schedule as comments" "python3 bin/lib/schedule.py cron .claude/loops/schedule.yml \"\$PWD\" | grep -q '#   pr-hunter'"
+check "a daily at: fires once a day"       "python3 tests/at_rule.py"
+printf 'loops:\n  - name: parked\n    every: 1d\n    enabled: false\n' > /tmp/rat-sched.yml
+check "a paused loop is reported paused"   "python3 bin/lib/schedule.py list /tmp/rat-sched.yml | grep -q paused"
+check "a paused loop is never due"         "test -z \"\$(python3 bin/lib/schedule.py due /tmp/rat-sched.yml /dev/null)\""
+
+section "one dry shift, end to end"
+bin/shift digest --dry-run > /tmp/rat-shift.out 2>&1
+RC=$?
+sed 's/^/        /' /tmp/rat-shift.out
+check "the shift finished with a verdict"  "test $RC -eq 0 -o $RC -eq 2"
+RECEIPT="$(dirname "$(find state/receipts -name receipt.json 2>/dev/null | sort | tail -n 1)")"
+check "a receipt folder exists"            "test -d '$RECEIPT'"
+check "receipt.json is valid json"         "python3 -c \"import json;json.load(open('$RECEIPT/receipt.json'))\""
+check "the contract reached the prompt"    "grep -q 'What you may never do' '$RECEIPT/prompt.md'"
+check "the rubric reached the prompt"      "grep -q 'Rubric: writing' '$RECEIPT/prompt.md'"
+check "the plan body reached the prompt"   "grep -q 'The loop that reads the other loops' '$RECEIPT/prompt.md'"
+check "stdout was captured as output.md"   "test -s '$RECEIPT/output.md'"
+check "the guard ran and wrote json"       "python3 -c \"import json;json.load(open('$RECEIPT/guard.json'))\""
+check "the grader wrote a verdict"         "grep -q verdict '$RECEIPT/grade.json'"
+check "trace.log recorded every phase"     "grep -q 'phase=act' state/trace.log && grep -q 'phase=guard' state/trace.log && grep -q 'phase=receipt' state/trace.log"
+check "the checkpoint remembers the loop"  "python3 bin/lib/conf.py get state/checkpoint.json loops.digest.last_verdict"
+check "the cursor survived the shift"      "python3 bin/lib/conf.py get state/checkpoint.json loops.digest.cursor"
+
+section "the guard"
+# A loop that misbehaves on purpose. The guard has to notice, and the shift has
+# to be blocked before anyone reads the output.
+make_bad_loop() {
+  local name="$1"
+  mkdir -p ".claude/loops/$name"
+  printf -- '---\nname: %s\nrubrics: []\ntimeout: 30\n---\nmisbehave\n' "$name" > ".claude/loops/$name/plan.md"
+  printf '#!/usr/bin/env bash\n%s\necho reported\n' "$2" > ".claude/loops/$name/act.sh"
+  chmod +x ".claude/loops/$name/act.sh"
+}
+
+make_bad_loop _leaky 'mkdir -p secrets && printf "token=abc\n" > secrets/prod.txt'
+bin/shift _leaky --dry-run >/dev/null 2>&1
+RC=$?
+check "writing to a denied path blocks"    "test \"$RC\" -eq 3"
+LEAK_RECEIPT="$(dirname "$(find state/receipts -name 'guard.json' | sort | tail -n 1)")"
+check "the violation is named in guard.json" "grep -q denylist '$LEAK_RECEIPT/guard.json'"
+check "the block is in the trace"          "grep -q 'phase=guard status=blocked' state/trace.log"
+rm -rf secrets .claude/loops/_leaky
+
+make_bad_loop _spray 'for i in $(seq 1 14); do printf "x\n" > "spray-$i.txt"; done'
+bin/shift _spray --dry-run >/dev/null 2>&1
+RC=$?
+check "exceeding the blast radius blocks"  "test \"$RC\" -eq 3"
+check "the limit is named in guard.json"   "grep -q blast-radius \"\$(dirname \"\$(find state/receipts -name guard.json | sort | tail -n 1)\")/guard.json\""
+rm -f spray-*.txt
+rm -rf .claude/loops/_spray
+
+printf 'ordinary work\n' > already-dirty.txt
+make_bad_loop _quiet 'true'
+bin/shift _quiet --dry-run >/dev/null 2>&1
+RC=$?
+check "work left on the branch is not blamed" "test \"$RC\" -le 2"
+rm -f already-dirty.txt
+rm -rf .claude/loops/_quiet
+
+section "the locks"
+mkdir -p state/locks/digest.lock
+date +%s > state/locks/digest.lock/started
+echo 99999 > state/locks/digest.lock/pid
+bin/shift digest --dry-run >/dev/null 2>&1
+RC=$?
+check "a second shift will not overlap"    "test \"$RC\" -eq 75"
+rm -rf state/locks/digest.lock
+
+section "the budget"
+check "the ledger records a charge"        "bash -c '. bin/lib/common.sh; rat_budget_add 0.25 smoke; test \"\$(rat_budget_today)\" = \"0.2500\"'"
+python3 - <<'PY'
+import json, datetime
+day = datetime.date.today().isoformat()
+json.dump({"days": {day: 99.0}, "by_loop": {}}, open("state/budget.json", "w"))
+PY
+bin/shift digest --dry-run >/dev/null 2>&1
+RC=$?
+check "a spent day refuses to start"       "test \"$RC\" -eq 75"
+rm -f state/budget.json
+
+section "concurrency"
+rm -f state/budget.json
+for i in 1 2 3 4 5 6 7 8; do
+  ( . bin/lib/common.sh && rat_budget_add 0.10 "loop$i" ) &
+done
+wait
+check "eight writers lose no spend"        "python3 -c \"
+import json
+d = json.load(open('state/budget.json'))
+assert abs(list(d['days'].values())[0] - 0.8) < 0.0001, d
+assert len(d['by_loop']) == 8, d
+\""
+rm -f state/budget.json
+
+section "a plan the harness cannot honour"
+mkdir -p .claude/loops/_quoted
+printf -- '---\nname: _quoted\nrubrics: []\ntimeout: 30\nverify: "echo \\"it works\\"; test 1 -eq 1"\n---\nnothing\n' > .claude/loops/_quoted/plan.md
+printf '#!/usr/bin/env bash\necho reported\n' > .claude/loops/_quoted/act.sh
+chmod +x .claude/loops/_quoted/act.sh
+bin/shift _quoted --dry-run >/dev/null 2>&1
+check "a verify command with quotes runs"  "grep -q '\"status\": \"pass\"' \"\$(dirname \"\$(find state/receipts -name receipt.json | sort | tail -n 1)\")/receipt.json\""
+rm -rf .claude/loops/_quoted
+
+mv CONTRACT.md CONTRACT.md.away
+bin/shift digest --dry-run >/dev/null 2>&1
+RC=$?
+check "no contract, no shift"              "test \"$RC\" -eq 1"
+mv CONTRACT.md.away CONTRACT.md
+
+section "the model bridge"
+mkdir -p state/scratch
+printf '0.9000\n' > state/scratch/agent-prior.cost
+RAT_RECEIPT="$PWD/state/scratch" RAT_MAX_USD=0.50 RAT_LOOP=cap-probe \
+  bin/rat-agent --tag probe > /tmp/rat-cap.out 2>&1 <<< "anything"
+RC=$?
+check "a shift past its cap makes no call" "test \"$RC\" -eq 1"
+check "and the receipt says why"           "grep -q 'spend cap' /tmp/rat-cap.out"
+rm -rf state/scratch
+
+mkdir -p state/scratch
+python3 - <<'PY'
+import json
+path = ".claude/loops/settings.json"
+settings = json.load(open(path))
+settings["agent"] = {"command": "printf", "args": ["[%s]", "two words"],
+                     "result_field": "result", "cost_field": "total_cost_usd"}
+json.dump(settings, open("/tmp/rat-settings-argtest.json", "w"), indent=2)
+PY
+cp .claude/loops/settings.json /tmp/rat-settings-real.json
+cp /tmp/rat-settings-argtest.json .claude/loops/settings.json
+RAT_RECEIPT="$PWD/state/scratch" RAT_LOOP=arg-probe \
+  bin/rat-agent --tag probe > /tmp/rat-args.out 2>&1 <<< "anything"
+check "an agent arg with a space stays one" "grep -q '\[two words\]' /tmp/rat-args.out"
+cp /tmp/rat-settings-real.json .claude/loops/settings.json
+rm -rf state/scratch
+
+section "the kill switch"
+./kill.sh "smoke test" >/dev/null 2>&1
+check "kill.sh writes state/HALT"          "test -f state/HALT"
+bin/shift digest --dry-run >/dev/null 2>&1
+RC=$?
+check "a halted harness starts nothing"    "test \"$RC\" -eq 75"
+check "the halt names who and why"         "grep -q 'smoke test' state/HALT"
+bin/rat resume >/dev/null 2>&1
+check "resume clears the halt"             "test ! -f state/HALT"
+
+section "timeouts"
+mkdir -p .claude/loops/_slow
+cat > .claude/loops/_slow/plan.md <<'PLAN'
+---
+name: _slow
+rubrics: []
+timeout: 2
+---
+sleep forever
+PLAN
+printf '#!/usr/bin/env bash\nsleep 30\n' > .claude/loops/_slow/act.sh
+chmod +x .claude/loops/_slow/act.sh
+START=$(date +%s)
+bin/shift _slow --dry-run >/dev/null 2>&1
+ELAPSED=$(( $(date +%s) - START ))
+check "a hung shift is killed at its cap"  "test $ELAPSED -lt 15"
+check "the timeout is in the trace"        "grep -q 'phase=act status=timeout' state/trace.log"
+rm -rf .claude/loops/_slow
+
+section "the front door"
+check "rat list prints the schedule"      "bin/rat list | grep -q pr-hunter"
+check "rat status prints today's spend"   "bin/rat status | grep -q today"
+check "rat receipts prints a row"         "bin/rat receipts 50 | grep -q digest"
+check "rat show opens the last receipt"   "bin/rat show | grep -q verdict"
+check "rat trace tails the log"           "bin/rat trace 5 | grep -q phase="
+check "rat new scaffolds a loop"          "bin/rat new probe && test -x .claude/loops/probe/act.sh"
+check "a scaffolded loop runs"             "bin/shift probe --dry-run; test \$? -le 2"
+check "rat doctor reports"                "bin/rat doctor >/dev/null 2>&1; test \$? -le 1"
+
+printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

@@ -1,0 +1,11 @@
+The rat writes here. Nothing in this folder is source code.
+
+  receipts/     one folder per shift - what was asked, what came back, how it graded
+  trace.log     one line per phase, append-only, the file you read when surprised
+  checkpoint.json  where each loop stopped, so the next shift can resume
+  budget.json   today's spend, per day and per loop
+  locks/        one folder per running shift, so two never overlap
+  HALT          written by kill.sh; while it exists, nothing starts
+
+All of it is gitignored. Delete the whole folder and the harness rebuilds it on
+the next shift - you only lose the history, never the setup.
