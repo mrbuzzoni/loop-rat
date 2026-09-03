@@ -79,6 +79,9 @@ def check_receipts(state_dir, trace_path):
 
 def load_receipts(state_dir, days):
     root = os.path.join(state_dir, "receipts")
+    # Paths are printed relative to the repository, not to whatever directory
+    # the audit happened to be run from.
+    home = os.path.dirname(os.path.abspath(state_dir.rstrip("/")))
     cutoff = time.time() - days * 86400
     rows = []
     for base, _dirs, files in os.walk(root):
@@ -92,7 +95,7 @@ def load_receipts(state_dir, days):
                 data = json.load(fh)
         except (OSError, ValueError):
             continue
-        data["_path"] = os.path.relpath(base)
+        data["_path"] = os.path.relpath(base, home)
         rows.append(data)
     rows.sort(key=lambda r: r.get("started", ""))
     return rows
