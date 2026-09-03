@@ -101,7 +101,30 @@ than passes, because the interesting receipt is never the clean one.
 **What you do.** Slow the cadence. This is almost always the answer, and almost
 never the first instinct.
 
-## 8. The harness inside the harness
+## 8. The loop blamed for your keystroke
+
+**What it looks like.** A report-only loop is blocked for changing files it never
+touched. The receipt accuses it; the diff is your own uncommitted work.
+
+**Why it happens.** The guard fingerprints the tree before the shift and compares
+afterwards. If you edit a file while the shift is running, that edit is inside
+the window, and nothing in a file's timestamps says who made it.
+
+**What catches it.** Nothing, if the loop and the person share a tree - which is
+why the shipped read-only loops all run with `worktree: true`. A shift working in
+its own checkout cannot be blamed for edits in yours, and the guard only ever
+inspects the checkout. When a report-only loop is blocked while sharing your
+tree, the guard now says so in the violation rather than letting the receipt
+accuse the loop.
+
+**What you do.** Put `worktree: true` on every loop that does not need to see
+your uncommitted work. `rat doctor` warns about report-only loops that lack it.
+
+This one was found by running the harness for real: a digest shift was blocked
+because a README was edited twenty-seven seconds after the shift fingerprinted
+the tree. The model's own report flagged it before the human did.
+
+## 9. The harness inside the harness
 
 **What it looks like.** A loop runs the test suite, the test suite runs the
 harness, and receipts start appearing in the wrong repository.

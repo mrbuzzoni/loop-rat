@@ -212,14 +212,16 @@ def check_plans(settings, scheduled):
                     "decide whether a repair worked" % (name, repair))
 
         if front.get("worktree") in (True, "true", 1, "1"):
-            if level == "report-only":
-                warn("%s: a worktree is pointless for a report-only loop, which "
-                     "may not change anything anyway" % name)
             git_ok = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"],
                                     capture_output=True, text=True)
             if git_ok.returncode != 0:
                 warn("%s asks for a worktree, but there is no commit to branch "
                      "from - it will run in the repository instead" % name)
+
+        if level == "report-only" and not front.get("worktree"):
+            warn("%s is report-only and runs in the repository itself, so an edit "
+                 "you make while it runs will be blamed on it - `worktree: true` "
+                 "removes that" % name)
 
         verify = str(front.get("verify") or "").strip()
         if verify:

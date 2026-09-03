@@ -1,9 +1,10 @@
 ---
 name: cost-watch
 autonomy: report-only
+worktree: true
 rubrics: [writing, safety]
-timeout: 240
-max_usd: 0.20
+timeout: 900
+max_usd: 1.50
 verify: ""
 ---
 

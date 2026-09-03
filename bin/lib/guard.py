@@ -198,11 +198,22 @@ def main(argv):
             break
 
     if files and not may_change:
+        note = "a %s loop is not allowed to change files" % autonomy
+        if not os.environ.get("RAT_WORKDIR") or os.environ.get("RAT_WORKDIR") == \
+                os.environ.get("RAT_ROOT"):
+            # The shift and the person share a tree, so a keystroke of yours
+            # during the shift is indistinguishable from a write of its own.
+            # Say so rather than letting the receipt accuse the loop.
+            note += (". This shift ran in the repository itself, so an edit you "
+                     "made while it was running looks the same as one it made - "
+                     "set `worktree: true` in the plan to remove the doubt")
         verdict["violations"].append({
             "kind": "autonomy",
             "level": autonomy,
             "changed": len(files),
-            "note": "a %s loop is not allowed to change files" % autonomy,
+            "shared_tree": not os.environ.get("RAT_WORKDIR")
+                           or os.environ.get("RAT_WORKDIR") == os.environ.get("RAT_ROOT"),
+            "note": note,
         })
     elif len(files) > max_files:
         verdict["violations"].append(

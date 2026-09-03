@@ -1,9 +1,10 @@
 ---
 name: pr-hunter
 autonomy: report-only
+worktree: true
 rubrics: [code, safety]
-timeout: 600
-max_usd: 0.75
+timeout: 1200
+max_usd: 2.00
 verify: ""
 ---
 

@@ -4,12 +4,25 @@
   agent_result.py <raw.json> <cost-file> <result-field> <cost-field>
 
 Prints the model's answer on stdout and writes the dollar amount to the cost
-file. Exits 1 if the response says it failed, so the shift records an error
-instead of an empty success.
+file.
+
+Exit codes matter to the caller: 0 the answer is good, 1 the attempt failed for
+a reason that will not change, 2 the attempt failed for a reason that probably
+will - an overloaded API, a rate limit, a dropped connection. Only the second
+kind is worth waiting for.
 """
 import json
 import os
+import re
 import sys
+
+# Failures worth waiting out rather than reporting as a lost night.
+TRANSIENT = re.compile(
+    r"\b(429|500|502|503|504|529)\b|overload|rate.?limit|timed?.?out|"
+    r"temporar|try again|connection (reset|closed|error)|"
+    r"service unavailable|econnreset|etimedout",
+    re.I,
+)
 
 
 def main(argv):
@@ -21,7 +34,7 @@ def main(argv):
         sys.stdout.write("**The shift could not reach the model.**\n\n"
                          "The agent produced no response at all.\n")
         sys.stderr.write("agent produced no response\n")
-        return 1
+        return 2                                # probably worth another try
 
     try:
         with open(raw_path, "r", encoding="utf-8") as fh:
@@ -53,7 +66,7 @@ def main(argv):
         # actually opens in the morning, and a silent empty file explains nothing.
         sys.stdout.write("**The shift could not reach the model.**\n\n%s\n" % message)
         sys.stderr.write("agent reported failure: %s\n" % message)
-        return 1
+        return 2 if TRANSIENT.search(str(message)) else 1
 
     sys.stdout.write(str(answer))
     if not str(answer).endswith("\n"):

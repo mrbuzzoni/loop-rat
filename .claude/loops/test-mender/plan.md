@@ -4,8 +4,8 @@ autonomy: assisted
 worktree: true
 repair: 1
 rubrics: [code, safety]
-timeout: 900
-max_usd: 1.00
+timeout: 1800
+max_usd: 2.50
 verify: "make test || npm test --silent || pytest -q || true"
 ---
 

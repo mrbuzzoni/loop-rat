@@ -9,7 +9,7 @@ a dry run does not get written. Anything that removes a brake is not a feature.
 Shipped work lives in [CHANGELOG.md](CHANGELOG.md); this file is only the part
 that has not happened yet.
 
-## Standing today - v0.7.1
+## Standing today - v0.8.0
 
 - the contract: rules committed, personal overrides gitignored
 - the guard, the caps, `kill.sh`: denylist, blast radius, spend ledger, halt file
@@ -19,7 +19,7 @@ that has not happened yet.
 - policy per path, so the harness's own code is out of reach of its loops
 - installable packs, and two of them
 - receipts and grading: one folder per shift, graded by a second agent
-- five loops, two packs, 119 checks, no services
+- five loops, two packs, 129 checks, no services
 
 ## 0.4 - read the night faster - shipped
 

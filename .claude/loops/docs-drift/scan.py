@@ -9,7 +9,7 @@ import os
 import re
 import sys
 
-ROOT = os.environ.get("RAT_ROOT", ".")
+ROOT = os.environ.get("RAT_WORKDIR") or os.environ.get("RAT_ROOT", ".")
 DOCS = ["README.md", "ROADMAP.md", "CHANGELOG.md", "CONTRACT.md"]
 DOC_DIRS = ["docs"]
 

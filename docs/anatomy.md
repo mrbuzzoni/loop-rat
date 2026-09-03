@@ -28,6 +28,8 @@ retune the whole harness:
 |---|---|
 | `agent.command`, `agent.args` | which binary is the model, and how it is called |
 | `agent.result_field`, `agent.cost_field` | where in its JSON the answer and the price live |
+| `agent.retries` | how many times a transient failure is waited out (a permanent one never is) |
+| `agent.retry_delay_seconds` | the first pause; each retry waits longer, and none starts if the shift is nearly out of time |
 | `autonomy.<level>` | what a loop at that level may change, and how much |
 | `caps.max_usd_per_shift` | the ceiling checked before each model call |
 | `caps.max_usd_per_day` | the ceiling checked before a shift starts at all |

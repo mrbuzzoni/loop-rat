@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.8.0 - 2026-09-03
+
+Everything here came from running the harness against a live model rather than
+from reading the code.
+
+- **A loop was blamed for a keystroke.** A report-only digest shift was blocked
+  because a README was edited twenty-seven seconds after the shift fingerprinted
+  the tree - the guard cannot tell your edit from the loop's when you share a
+  tree. All shipped read-only loops now run with `worktree: true`, which removes
+  the ambiguity structurally, `rat doctor` warns about report-only loops that
+  lack it, and the guard says so plainly when it is judging a shared tree.
+- **A transient failure no longer costs the night.** An overloaded API, a rate
+  limit or a dropped connection is waited out with a longer pause each time; a
+  permanent failure (bad credentials, a model that does not exist) is reported
+  at once, because waiting will not help. Retries stop early rather than being
+  killed mid-wait when the shift is nearly out of time, every attempt is billed,
+  and only the final answer reaches the report.
+- **The receipt no longer says "no usable JSON" when no grader ran.** Being out
+  of budget, being in a dry run, and a grader that answered badly are three
+  different sentences now.
+- **Caps and timeouts match measured reality.** One call through the `claude`
+  CLI cost $0.20-1.10 and took two to nine minutes here, so the shipped caps
+  ($2.50 a shift, $12 a day) and timeouts (15-30 minutes) were raised to match,
+  and `pr-hunter` was slowed from every 30 minutes to every 4 hours. The README
+  now states measured numbers instead of an estimate.
+- `rat-agent` fails with a usage line instead of hanging when stdin is a
+  terminal.
+- 129 checks in the smoke test.
+
 ## 0.7.1 - 2026-09-03
 
 Found by auditing the harness rather than by adding to it.

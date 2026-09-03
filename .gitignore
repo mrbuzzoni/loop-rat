@@ -7,6 +7,9 @@ contract.local.md
 state/*
 !state/.gitkeep
 
+# Local editor and tool settings, per machine
+.claude/settings.local.json
+
 # Local noise
 __pycache__/
 *.pyc

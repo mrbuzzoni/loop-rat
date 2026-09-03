@@ -11,7 +11,7 @@
 
 loops:
   - name: pr-hunter
-    every: 30m
+    every: 4h
     window: "09:00-19:00"
     days: mon-fri
     enabled: true

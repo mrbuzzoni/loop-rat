@@ -1,9 +1,10 @@
 ---
 name: digest
 autonomy: report-only
+worktree: true
 rubrics: [writing, safety]
-timeout: 300
-max_usd: 0.25
+timeout: 900
+max_usd: 1.50
 verify: ""
 ---
 

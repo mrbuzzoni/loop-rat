@@ -2,8 +2,8 @@
 name: todo-harvest
 autonomy: report-only
 rubrics: [writing, safety]
-timeout: 240
-max_usd: 0.20
+timeout: 900
+max_usd: 1.50
 verify: ""
 ---
 

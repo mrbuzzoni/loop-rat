@@ -3,7 +3,7 @@ name: flaky-finder
 autonomy: report-only
 rubrics: [writing, safety]
 timeout: 1800
-max_usd: 0.20
+max_usd: 1.50
 verify: ""
 ---
 

@@ -212,6 +212,9 @@ export RAT_WORKDIR="$WORKDIR"
 
 export RAT_PLAN="$PLAN"
 export RAT_TIMEOUT="$TIMEOUT"
+# So a retry can tell whether it has time to finish rather than being killed
+# halfway through a wait it should never have started.
+export RAT_SHIFT_DEADLINE="$(( $(rat_epoch) + TIMEOUT ))"
 export RAT_MAX_USD="$MAX_USD"
 export PATH="$RAT_ROOT/bin:$PATH"
 
@@ -387,7 +390,8 @@ elif [ -n "$RUBRICS" ] && [ "$GRADE_MODE" != "off" ]; then
 import json, re, sys
 raw = open(sys.argv[1]).read()
 match = re.search(r"\{.*\}", raw, re.S)
-grade = {"verdict": "needs-review", "score": None, "notes": "grader returned no usable JSON"}
+grade = {"verdict": "needs-review", "score": None,
+         "notes": "the grader answered, but not with JSON this harness could read"}
 if match:
     try:
         parsed = json.loads(match.group(0))
@@ -395,8 +399,19 @@ if match:
             grade = parsed
     except ValueError:
         pass
+# Say which of the three silences this was. "No usable JSON" when the grader was
+# never called is exactly the kind of misleading receipt this project exists to
+# avoid.
 if "[dry run]" in raw:
-    grade = {"verdict": "needs-review", "score": None, "notes": "dry run - no grader was called"}
+    grade = {"verdict": "needs-review", "score": None,
+             "notes": "dry run - no grader was called"}
+elif "spend cap" in raw:
+    grade = {"verdict": "needs-review", "score": None,
+             "notes": "no grader ran: the shift was out of budget before it could "
+                      "be graded, so this work is unreviewed rather than approved"}
+elif not raw.strip():
+    grade = {"verdict": "needs-review", "score": None,
+             "notes": "no grader ran: the grading call produced nothing"}
 with open(sys.argv[2], "w") as fh:
     json.dump(grade, fh, indent=2)
     fh.write("\n")

@@ -465,12 +465,111 @@ check "and its price is recorded"           "grep -q '0.0123' state/scratch/agen
 cp /tmp/rat-settings-real.json .claude/loops/settings.json
 rm -rf state/scratch fake-agent
 
+# a transient failure is waited out; a permanent one is reported at once
+mkdir -p state/scratch
+cat > flaky-agent <<'EOF'
+#!/usr/bin/env python3
+import json, os, sys
+sys.stdin.read()
+counter = "flaky-count"
+tries = int(open(counter).read()) if os.path.exists(counter) else 0
+open(counter, "w").write(str(tries + 1))
+if tries < 2:
+    print(json.dumps({"is_error": True, "result": "API Error: 529 Overloaded.",
+                      "total_cost_usd": 0.003}))
+else:
+    print(json.dumps({"result": "the answer, on the third try",
+                      "total_cost_usd": 0.05}))
+EOF
+cat > broken-agent <<'EOF'
+#!/usr/bin/env python3
+import json, sys
+sys.stdin.read()
+print(json.dumps({"is_error": True, "result": "Invalid model name: nonsense",
+                  "total_cost_usd": 0.0}))
+EOF
+chmod +x flaky-agent broken-agent
+cp .claude/loops/settings.json /tmp/rat-settings-real2.json
+python3 - <<'PY'
+import json
+p = ".claude/loops/settings.json"
+s = json.load(open(p))
+s["agent"] = {"command": "./flaky-agent", "args": [], "result_field": "result",
+              "cost_field": "total_cost_usd", "retries": 2,
+              "retry_delay_seconds": 1}
+json.dump(s, open(p, "w"), indent=2)
+PY
+rm -f flaky-count
+RAT_RECEIPT="$PWD/state/scratch" RAT_LOOP=retry-probe bin/rat-agent --tag act   > /tmp/rat-retry.out 2>/dev/null <<< "hi"
+RC=$?
+check "a transient failure is retried"      "test $RC -eq 0 && grep -q 'third try' /tmp/rat-retry.out"
+check "the report holds only the answer"    "! grep -q 'could not reach' /tmp/rat-retry.out"
+check "every attempt is billed"             "python3 -c \"
+import json
+by = json.load(open('state/budget.json'))['by_loop']['retry-probe']
+assert abs(by - 0.056) < 0.001, by
+\""
+check "the retries are in the trace"        "grep -q 'status=retrying' state/trace.log"
+
+python3 - <<'PY'
+import json
+p = ".claude/loops/settings.json"
+s = json.load(open(p))
+s["agent"]["command"] = "./broken-agent"
+json.dump(s, open(p, "w"), indent=2)
+PY
+START=$(date +%s)
+RAT_RECEIPT="$PWD/state/scratch" RAT_LOOP=broken-probe bin/rat-agent --tag act2   > /tmp/rat-broken.out 2>/dev/null <<< "hi"
+RC=$?
+ELAPSED=$(( $(date +%s) - START ))
+check "a permanent failure is not retried"  "test $RC -eq 1 && test $ELAPSED -lt 3"
+check "and the receipt says what it was"    "grep -q 'Invalid model name' /tmp/rat-broken.out"
+cp /tmp/rat-settings-real2.json .claude/loops/settings.json
+rm -rf state/scratch flaky-agent broken-agent flaky-count
+
 # an agent that produces nothing is a failure with a sentence, not a traceback
 mkdir -p state/scratch
 python3 bin/lib/agent_result.py state/scratch/none.json state/scratch/none.cost result total_cost_usd > /tmp/rat-none.out 2>/dev/null
 RC=$?
-check "a missing response fails cleanly"    "test $RC -eq 1 && grep -q 'could not reach' /tmp/rat-none.out"
+check "a missing response fails cleanly"    "test $RC -eq 2 && grep -q 'could not reach' /tmp/rat-none.out"
 rm -rf state/scratch
+
+# the grader's answer has to survive the trip from JSON to grade.json
+mkdir -p .claude/loops/_graded
+printf -- '---\nname: _graded\nautonomy: report-only\nrubrics: [safety]\ntimeout: 60\n---\nreport\n' > .claude/loops/_graded/plan.md
+printf '#!/usr/bin/env bash\necho "a clean night"\n' > .claude/loops/_graded/act.sh
+chmod +x .claude/loops/_graded/act.sh
+cat > grading-agent <<'EOF'
+#!/usr/bin/env python3
+import json, sys
+prompt = sys.stdin.read()
+if "grader" in prompt:
+    answer = ('Here is my assessment.\n\n'
+              '{"verdict": "pass", "score": 88, "notes": "the report matches what '
+              'the shift did", "fix_first": ""}')
+else:
+    answer = "**What I found** - nothing to report."
+print(json.dumps({"result": answer, "total_cost_usd": 0.02}))
+EOF
+chmod +x grading-agent
+cp .claude/loops/settings.json /tmp/rat-settings-real3.json
+python3 - <<'PY'
+import json
+p = ".claude/loops/settings.json"
+s = json.load(open(p))
+s["agent"] = {"command": "./grading-agent", "args": [], "result_field": "result",
+              "cost_field": "total_cost_usd", "retries": 0}
+json.dump(s, open(p, "w"), indent=2)
+PY
+bin/shift _graded >/dev/null 2>&1
+RC=$?
+GRADED="$(find state/receipts -type d -name '*_graded' | sort | tail -n 1)"
+check "a real verdict reaches the receipt"   "test $RC -eq 0 && grep -q '\"verdict\": \"pass\"' '$GRADED/grade.json'"
+check "and so does the score"                "grep -q '\"score\": 88' '$GRADED/grade.json'"
+check "prose around the json is tolerated"   "grep -q 'matches what' '$GRADED/grade.json'"
+check "the shift passed on that verdict"     "grep -q '\"verdict\": \"pass\"' '$GRADED/receipt.json'"
+cp /tmp/rat-settings-real3.json .claude/loops/settings.json
+rm -rf .claude/loops/_graded grading-agent
 
 # an in-place shift must not touch the index you were using, and its patch
 # must contain only what it changed

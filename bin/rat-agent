@@ -7,6 +7,11 @@
 # raw response next to the receipt. Cost is added to today's ledger. If no agent
 # binary is installed, or RAT_DRY_RUN=1, it returns a stub so every other part of
 # the pipeline stays testable on a laptop with no API key.
+#
+# A transient failure - an overloaded API, a rate limit, a dropped connection -
+# is waited out rather than reported as a lost night. A permanent one (bad
+# credentials, a model that does not exist) is reported immediately, because
+# waiting will not help and the receipt should say so while you can still act.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,6 +27,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# Hanging on a terminal that will never send anything is not a helpful default.
+if [ -t 0 ]; then
+  rat_err "rat-agent reads the prompt on stdin:  printf 'do the thing' | rat-agent --tag act"
+  exit 2
+fi
 PROMPT="$(cat)"
 OUT_DIR="${RAT_RECEIPT:-$RAT_STATE_DIR/scratch}"
 mkdir -p "$OUT_DIR"
@@ -85,20 +95,73 @@ fi
 # read_args prints shell-quoted words, so eval is what makes an argument with a
 # space in it survive - plain word splitting would tear it in half.
 eval "ARGS=($(read_args))"
-AGENT_RC=0
-# ${ARGS[@]+"${ARGS[@]}"}: an empty args list is "unbound" to bash 3.2 under
-# set -u, and an agent that takes no flags is a perfectly normal agent.
-printf '%s' "$PROMPT" | "$AGENT_CMD" ${ARGS[@]+"${ARGS[@]}"} > "$RAW" 2> "$OUT_DIR/agent-$TAG.stderr" || AGENT_RC=$?
-if [ "$AGENT_RC" -ne 0 ]; then
-  # Do not bail yet: the response body usually explains the failure, and that
-  # explanation belongs in the receipt rather than in a log nobody opens.
-  rat_err "rat-agent: $AGENT_CMD exited $AGENT_RC"
-fi
-
+RETRIES="$(rat_setting agent.retries 2)"
+DELAY="$(rat_setting agent.retry_delay_seconds 20)"
 COST_FILE="$OUT_DIR/agent-$TAG.cost"
+ATTEMPT=0
 RC=0
-rat_py "$RAT_ROOT/bin/lib/agent_result.py" "$RAW" "$COST_FILE" "$RESULT_FIELD" "$COST_FIELD" || RC=$?
-if [ "$AGENT_RC" -ne 0 ] && [ "$RC" -eq 0 ]; then RC="$AGENT_RC"; fi
 
-rat_budget_add "$(cat "$COST_FILE" 2>/dev/null || echo 0)" "${RAT_LOOP:-unknown}"
+while :; do
+  ATTEMPT=$((ATTEMPT + 1))
+
+  AGENT_RC=0
+  printf '%s' "$PROMPT" | "$AGENT_CMD" ${ARGS[@]+"${ARGS[@]}"} \
+    > "$RAW" 2> "$OUT_DIR/agent-$TAG.stderr" || AGENT_RC=$?
+
+  # Held back rather than printed: only the last attempt's answer belongs in
+  # output.md. A report that opens with two failures and then succeeds reads as
+  # if the night went badly when it did not.
+  RC=0
+  rat_py "$RAT_ROOT/bin/lib/agent_result.py" "$RAW" "$COST_FILE" \
+    "$RESULT_FIELD" "$COST_FIELD" > "$OUT_DIR/agent-$TAG.answer" || RC=$?
+
+  # A failed attempt still costs money, so it still goes in the ledger.
+  rat_budget_add "$(cat "$COST_FILE" 2>/dev/null || echo 0)" "${RAT_LOOP:-unknown}"
+
+  if [ "$RC" -eq 0 ]; then
+    if [ "$AGENT_RC" -ne 0 ]; then RC="$AGENT_RC"; fi
+    cat "$OUT_DIR/agent-$TAG.answer"
+    break
+  fi
+
+  if [ "$RC" -ne 2 ] || [ "$ATTEMPT" -gt "$RETRIES" ]; then
+    [ "$RC" -eq 2 ] && RC=1
+    if [ "$ATTEMPT" -gt 1 ]; then
+      printf '**The shift could not reach the model, after %d attempts.**\n\n' "$ATTEMPT"
+      tail -n +3 "$OUT_DIR/agent-$TAG.answer" 2>/dev/null || cat "$OUT_DIR/agent-$TAG.answer"
+    else
+      cat "$OUT_DIR/agent-$TAG.answer"
+    fi
+    break
+  fi
+
+  # Keep what the failed attempt cost and said, then wait longer each time.
+  cp "$COST_FILE" "$OUT_DIR/agent-$TAG-attempt$ATTEMPT.cost" 2>/dev/null || true
+  mv "$OUT_DIR/agent-$TAG.answer" "$OUT_DIR/agent-$TAG-attempt$ATTEMPT.answer" 2>/dev/null || true
+  cp "$RAW" "$OUT_DIR/agent-$TAG-attempt$ATTEMPT.json" 2>/dev/null || true
+  printf '0.0000\n' > "$COST_FILE"
+  WAIT=$((DELAY * ATTEMPT))
+
+  # Do not start a wait the shift cannot outlive. Being killed mid-retry loses
+  # the receipt's explanation and looks like a timeout rather than an
+  # overloaded API, which is the wrong thing to read in the morning.
+  if [ -n "${RAT_SHIFT_DEADLINE:-}" ]; then
+    LEFT=$(( RAT_SHIFT_DEADLINE - $(rat_epoch) ))
+    if [ "$LEFT" -lt $((WAIT + 30)) ]; then
+      rat_warn "rat-agent: ${LEFT}s left in this shift, not waiting ${WAIT}s to retry"
+      rat_trace agent gave-up "tag=$TAG attempt=$ATTEMPT left=${LEFT}s"
+      RC=1
+      printf '**The shift could not reach the model, after %d attempt(s).**\n\n' "$ATTEMPT"
+      tail -n +3 "$OUT_DIR/agent-$TAG-attempt$ATTEMPT.answer" 2>/dev/null || true
+      printf '\nIt stopped retrying because only %ds of the shift were left.\n' "$LEFT"
+      break
+    fi
+  fi
+
+  rat_warn "rat-agent: transient failure on attempt $ATTEMPT, waiting ${WAIT}s"
+  rat_trace agent retrying "tag=$TAG attempt=$ATTEMPT wait=${WAIT}s"
+  sleep "$WAIT"
+done
+
+rm -f "$OUT_DIR/agent-$TAG.answer"
 exit "$RC"

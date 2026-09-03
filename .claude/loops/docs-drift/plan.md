@@ -1,9 +1,10 @@
 ---
 name: docs-drift
 autonomy: report-only
+worktree: true
 rubrics: [writing, safety]
-timeout: 240
-max_usd: 0.20
+timeout: 900
+max_usd: 1.50
 verify: ""
 ---
 
@@ -13,6 +14,12 @@ Documentation rots quietly. A flag gets renamed, a command gets added, a setting
 gets a second key, and the README keeps describing the tool as it was three
 weeks ago. Nobody notices until a stranger follows the instructions and they do
 not work.
+
+This loop reads the **committed** state of the repository, not your working
+copy - it runs in its own checkout. That is deliberate: drift is about what a
+reader of this repository sees, and half-finished edits on your machine are not
+that yet. It also means an edit you make while the loop is running is never
+mistaken for something the loop did.
 
 `scan.py` has already done the comparing. It reads the actual `case` block in
 `bin/rat`, the actual keys in `settings.json`, and every markdown file in the
