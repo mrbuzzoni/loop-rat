@@ -154,6 +154,23 @@ Then add it to `schedule.yml`. Details in [docs/writing-a-loop.md](docs/writing-
 
 ---
 
+## Where this is going
+
+| version | the one sentence |
+|---|---|
+| **0.4** | read the night faster - `rat watch`, `rat replay`, a weekly digest |
+| **0.5** | off the laptop - the tick runs in Actions, state travels on a branch |
+| **0.6** | sharper graders - rubric packs, two graders, `rat calibrate` |
+| **0.7** | the work itself - a worktree per shift, bounded repair, loop packs |
+| **1.0** | trust - a hash-chained trace, autonomy per directory, `rat audit` |
+| **never** | no dashboard, no database, no hosted service, no auto-merge |
+
+Nothing becomes a default until a week of receipts says it should. The full
+version, including why each refusal is a refusal, is in
+[ROADMAP.md](ROADMAP.md).
+
+---
+
 ## Scheduling
 
 `bin/rat run-due` reads `schedule.yml` and the checkpoint, then runs whatever is
@@ -247,5 +264,7 @@ thing stubbed.
 - [docs/writing-a-loop.md](docs/writing-a-loop.md) - the plan, the act script, the stop condition
 - [docs/safety.md](docs/safety.md) - what stops a shift, and in which order
 - [docs/receipts.md](docs/receipts.md) - reading a morning's worth in two minutes
+- [ROADMAP.md](ROADMAP.md) - what comes next, and the four things that never will
+- [CHANGELOG.md](CHANGELOG.md) - what has already landed, and why
 
 MIT licensed. Take the parts you want.
