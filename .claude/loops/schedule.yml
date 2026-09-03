@@ -27,3 +27,15 @@ loops:
     at: "06:45"
     days: mon-fri
     enabled: true
+
+  - name: docs-drift
+    every: 1d
+    at: "07:15"
+    days: mon-fri
+    enabled: true
+
+  - name: cost-watch
+    every: 1d
+    at: "07:30"
+    days: mon
+    enabled: true

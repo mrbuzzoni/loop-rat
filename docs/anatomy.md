@@ -21,9 +21,22 @@ memory flags or asking colleagues to respect a rule they never agreed to.
 
 ## The harness
 
-**`.claude/loops/settings.json`** - the numbers. Which agent binary to call and
-with what flags; spend caps per shift and per day; the timeout; the blast
-radius; the path denylist; whether grading runs.
+**`.claude/loops/settings.json`** - the numbers, and the only file you edit to
+retune the whole harness:
+
+| key | what it decides |
+|---|---|
+| `agent.command`, `agent.args` | which binary is the model, and how it is called |
+| `agent.result_field`, `agent.cost_field` | where in its JSON the answer and the price live |
+| `autonomy.<level>` | what a loop at that level may change, and how much |
+| `caps.max_usd_per_shift` | the ceiling checked before each model call |
+| `caps.max_usd_per_day` | the ceiling checked before a shift starts at all |
+| `caps.timeout_seconds` | how long an `act.sh` may run before it is killed |
+| `caps.max_files_changed` | the default blast radius, when a level does not set one |
+| `guard.denylist` | globs a shift may never touch |
+| `guard.scan_secrets` | whether the diff is searched for keys and tokens |
+| `grading.mode` | `auto` runs the second agent, `off` skips it |
+| `receipts.keep_days`, `receipts.keep_failed_days` | what `rat prune` removes, and what it spares |
 
 **`.claude/loops/schedule.yml`** - when each loop is eligible to run: `every`,
 optional `at`, an hours `window`, `days`, and `enabled`. Both `bin/rat run-due`
@@ -85,8 +98,9 @@ and cleared, so a crashed shift cannot block its loop forever.
 
 ## The commands
 
-**`bin/rat`** - the front door: `list`, `run`, `run-due`, `status`, `receipts`,
-`show`, `trace`, `new`, `cron`, `doctor`, `resume`.
+**`bin/rat`** - the front door: `list`, `run`, `run-due`, `watch`, `status`,
+`receipts`, `show`, `trace`, `new`, `prune`, `cron`, `doctor`, `resume`,
+`version`.
 
 **`bin/shift`** - one shift, end to end. Everything that must happen in order -
 lock, brief, act, verify, guard, grade, receipt - happens here and nowhere else.

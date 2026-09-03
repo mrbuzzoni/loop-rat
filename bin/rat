@@ -8,6 +8,7 @@
 #   rat receipts [n]         the last n receipts, newest first
 #   rat show [receipt]       read one receipt in full
 #   rat trace [n]            tail the trace log
+#   rat watch [loop]         follow a running shift, phase by phase, until it ends
 #   rat prune [--apply]      age out old receipts (lists them first)
 #   rat new <name>           scaffold a new loop from the template
 #   rat cron                 print crontab lines for the current schedule
@@ -23,16 +24,22 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 . "$HERE/lib/common.sh"
 
-RAT_VERSION="0.3.3"
+RAT_VERSION="0.4.0"
 SCHEDULE="$RAT_LOOPS_DIR/schedule.yml"
 SCHED_PY="$RAT_ROOT/bin/lib/schedule.py"
 
 usage() { awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"; }
 
 cmd_list() {
-  printf '%-16s %-8s %-14s %-9s %s\n' LOOP EVERY WINDOW DAYS STATE
+  printf '%-16s %-8s %-14s %-9s %-13s %s\n' LOOP EVERY WINDOW DAYS AUTONOMY STATE
   rat_py "$SCHED_PY" list "$SCHEDULE" | while IFS=$'\t' read -r name every window days state; do
-    printf '%-16s %-8s %-14s %-9s %s\n' "$name" "$every" "$window" "$days" "$state"
+    local autonomy=""
+    if [ -f "$RAT_LOOPS_DIR/$name/plan.md" ]; then
+      autonomy="$(rat_py "$RAT_CONF" fm-get "$RAT_LOOPS_DIR/$name/plan.md" autonomy 2>/dev/null || true)"
+    fi
+    [ -n "$autonomy" ] || autonomy="report-only"
+    printf '%-16s %-8s %-14s %-9s %-13s %s\n' \
+      "$name" "$every" "$window" "$days" "$autonomy" "$state"
   done
 }
 
@@ -120,6 +127,81 @@ cmd_show() {
   if [ -s "$dir/guard.json" ]; then echo; rat_say "-- what the guard saw"; head -n 30 "$dir/guard.json"; fi
 }
 
+# Watching a shift is not the same as reading its receipt afterwards. The receipt
+# tells you what happened; the watch tells you where a shift is spending its
+# night, which is the only way to find out that a loop is slow rather than stuck.
+cmd_watch() {
+  local want=""
+  local timeout=300
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --timeout) timeout="$2"; shift 2 ;;
+      -*) rat_err "watch: unknown flag $1"; return 2 ;;
+      *) want="$1"; shift ;;
+    esac
+  done
+
+  mkdir -p "$RAT_STATE_DIR"
+  touch "$RAT_TRACE"
+  local seen
+  seen="$(wc -l < "$RAT_TRACE" | tr -d ' ')"
+
+  if [ -n "$(ls -d "$RAT_STATE_DIR"/locks/*.lock 2>/dev/null | head -n 1)" ]; then
+    rat_say "attached to a shift already running"
+  else
+    rat_say "waiting for a shift to start (up to ${timeout}s) - ctrl-c to stop"
+  fi
+
+  local waited=0
+  local started=""
+  local chunk
+  chunk="$(mktemp)"
+
+  while [ "$waited" -lt "$timeout" ]; do
+    local total
+    total="$(wc -l < "$RAT_TRACE" | tr -d ' ')"
+    if [ "$total" -gt "$seen" ]; then
+      sed -n "$((seen + 1)),${total}p" "$RAT_TRACE" > "$chunk"
+      seen="$total"
+      while read -r line; do
+        local loop phase status shift_id rest
+        loop="$(printf '%s' "$line" | sed -n 's/.*loop=\([^ ]*\).*/\1/p')"
+        phase="$(printf '%s' "$line" | sed -n 's/.*phase=\([^ ]*\).*/\1/p')"
+        status="$(printf '%s' "$line" | sed -n 's/.*status=\([^ ]*\).*/\1/p')"
+        shift_id="$(printf '%s' "$line" | sed -n 's/.*shift=\([^ ]*\).*/\1/p')"
+        rest="$(printf '%s' "$line" | sed 's/.*status=[^ ]* *//')"
+        [ -n "$want" ] && [ "$loop" != "$want" ] && continue
+        [ -n "$started" ] || started="$loop/$shift_id"
+        printf '%s  %-14s %-9s %-9s %s\n' \
+          "$(printf '%s' "$line" | cut -c12-19)" "$loop" "$phase" "$status" "$rest"
+        if [ "$phase" = "receipt" ]; then
+          local dir
+          dir="$(printf '%s' "$rest" | sed -n 's/.*dir=\([^ ]*\).*/\1/p')"
+          echo
+          if [ -n "$dir" ] && [ -f "$RAT_ROOT/$dir/output.md" ]; then
+            rat_say "-- what it reported"
+            head -n 12 "$RAT_ROOT/$dir/output.md"
+            echo
+            rat_say "full receipt: bin/rat show $dir"
+          fi
+          rm -f "$chunk"
+          return 0
+        fi
+      done < "$chunk"
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  rm -f "$chunk"
+  if [ -z "$started" ]; then
+    rat_warn "nothing started within ${timeout}s"
+    return 75
+  fi
+  rat_warn "gave up watching after ${timeout}s - the shift is still running"
+  return 75
+}
+
 cmd_prune() {
   local keep keep_failed
   keep="$(rat_setting receipts.keep_days 30)"
@@ -205,6 +287,7 @@ case "${1:-}" in
   trace)     shift; tail -n "${1:-20}" "$RAT_TRACE" 2>/dev/null || rat_say "no trace yet" ;;
   new)       shift; cmd_new "$@" ;;
   prune)     shift; cmd_prune "$@" ;;
+  watch)     shift; cmd_watch "$@" ;;
   cron)      shift; rat_py "$SCHED_PY" cron "$SCHEDULE" "$RAT_ROOT" ;;
   doctor)    shift; cmd_doctor "$@" ;;
   resume)    shift; cmd_resume "$@" ;;

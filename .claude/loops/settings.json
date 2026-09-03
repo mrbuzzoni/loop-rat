@@ -6,6 +6,11 @@
     "result_field": "result",
     "cost_field": "total_cost_usd"
   },
+  "autonomy": {
+    "report-only": { "may_change_files": false, "max_files_changed": 0 },
+    "assisted":    { "may_change_files": true,  "max_files_changed": 10 },
+    "autonomous":  { "may_change_files": true,  "max_files_changed": 20 }
+  },
   "caps": {
     "max_usd_per_shift": 1.00,
     "max_usd_per_day": 5.00,

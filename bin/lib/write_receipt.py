@@ -27,6 +27,7 @@ receipt = {
         "status": env["RAT_GUARD_STATUS"],
         "files_changed": int(env["RAT_CHANGED"] or 0),
     },
+    "autonomy": env.get("RAT_AUTONOMY", "report-only"),
     "verdict": env["RAT_VERDICT"],
     "cost_usd": float(env["RAT_COST"] or 0),
     "dry_run": env.get("RAT_DRY_RUN", "0") == "1",

@@ -10,12 +10,17 @@ questions that must never depend on a model's opinion:
 
 Two modes:
 
-  guard.py --snapshot <file>              record the working tree before a shift
-  guard.py <settings.json> [<snapshot>]   judge what the shift changed
+  guard.py --snapshot <file>                          record the tree first
+  guard.py <settings.json> [<snapshot>] [<autonomy>]  judge what changed
 
 A file counts as "changed by this shift" if it was not dirty before, or if its
 size or mtime moved while the shift was running. Work someone left on the branch
 yesterday is not held against tonight's loop.
+
+The autonomy level comes from the loop's plan and decides how much change is
+allowed at all. A report-only loop that writes a file is blocked even when the
+file is harmless and the diff is small: the point of the level is that the loop
+said it would not, and then did.
 
 Exit codes: 0 clean, 3 blocked. The verdict is printed as JSON either way.
 """
@@ -92,6 +97,21 @@ def load_snapshot(path):
     return baseline
 
 
+def harness_paths(repo):
+    """Paths the harness writes to by design.
+
+    A shift writing its own receipt is not a shift changing the repository. The
+    contract calls the receipt folder the loop's desk, and a guard that counts
+    the desk blocks every report-only loop on its first night.
+    """
+    state = os.environ.get("RAT_STATE_DIR") or os.path.join(repo, "state")
+    try:
+        rel = os.path.relpath(state, repo)
+    except ValueError:
+        rel = "state"
+    return [rel.rstrip("/") + "/*", rel.rstrip("/") + "/**"]
+
+
 def main(argv):
     repo = os.environ.get("RAT_ROOT", ".")
 
@@ -101,17 +121,28 @@ def main(argv):
     settings_path = argv[1] if len(argv) > 1 else os.path.join(
         repo, ".claude/loops/settings.json")
     baseline = load_snapshot(argv[2] if len(argv) > 2 else None)
+    autonomy = argv[3] if len(argv) > 3 else "report-only"
 
     with open(settings_path, "r", encoding="utf-8") as fh:
         settings = json.load(fh)
     guard = settings.get("guard", {})
     denylist = guard.get("denylist", [])
-    max_files = int(settings.get("caps", {}).get("max_files_changed", 10))
+
+    # An unknown level is treated as the strictest one. A typo in a plan must
+    # never widen what a loop may do.
+    levels = settings.get("autonomy", {})
+    level = levels.get(autonomy, {"may_change_files": False, "max_files_changed": 0})
+    may_change = bool(level.get("may_change_files", False))
+    max_files = int(level.get(
+        "max_files_changed",
+        settings.get("caps", {}).get("max_files_changed", 10)))
 
     verdict = {
         "ok": True,
+        "autonomy": autonomy,
         "checked": 0,
         "pre_existing": len(baseline),
+        "ignored": "harness state",
         "violations": [],
         "files": [],
     }
@@ -122,7 +153,12 @@ def main(argv):
         print(json.dumps(verdict, indent=2))
         return 0
 
-    files = [p for p in current if baseline.get(p) != fingerprint(repo, p)]
+    ignore = harness_paths(repo) + guard.get("ignore_paths", [])
+    files = [
+        p for p in current
+        if baseline.get(p) != fingerprint(repo, p)
+        and not any(fnmatch.fnmatch(p, pattern) for pattern in ignore)
+    ]
     verdict["files"] = files
     verdict["checked"] = len(files)
 
@@ -133,9 +169,17 @@ def main(argv):
                     {"kind": "denylist", "path": path, "pattern": pattern})
                 break
 
-    if len(files) > max_files:
+    if files and not may_change:
+        verdict["violations"].append({
+            "kind": "autonomy",
+            "level": autonomy,
+            "changed": len(files),
+            "note": "a %s loop is not allowed to change files" % autonomy,
+        })
+    elif len(files) > max_files:
         verdict["violations"].append(
-            {"kind": "blast-radius", "changed": len(files), "limit": max_files})
+            {"kind": "blast-radius", "changed": len(files),
+             "limit": max_files, "level": autonomy})
 
     if guard.get("scan_secrets", True):
         _, unstaged, _ = git(repo, "diff", "--unified=0")

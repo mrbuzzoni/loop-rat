@@ -53,6 +53,9 @@ MAX_USD="$(rat_py "$RAT_CONF" fm-get "$PLAN" max_usd 2>/dev/null || true)"
 [ -n "$MAX_USD" ] || MAX_USD="$(rat_setting caps.max_usd_per_shift 1.00)"
 DAY_CAP="$(rat_setting caps.max_usd_per_day 5.00)"
 RUBRICS="$(rat_py "$RAT_CONF" fm-get "$PLAN" rubrics 2>/dev/null | tr -d '[]"' | tr ',' ' ' || true)"
+AUTONOMY="$(rat_py "$RAT_CONF" fm-get "$PLAN" autonomy 2>/dev/null || true)"
+[ -n "$AUTONOMY" ] || AUTONOMY="report-only"
+export RAT_AUTONOMY="$AUTONOMY"
 VERIFY_CMD="$(rat_py "$RAT_CONF" fm-get "$PLAN" verify 2>/dev/null || true)"
 
 SPENT_TODAY="$(rat_budget_today)"
@@ -77,7 +80,7 @@ mkdir -p "$RAT_RECEIPT"
 STARTED_EPOCH="$(rat_epoch)"
 STARTED_ISO="$(rat_now_iso)"
 
-rat_trace preflight ok "timeout=${TIMEOUT}s cap=\$$MAX_USD dry=${RAT_DRY_RUN:-0}"
+rat_trace preflight ok "autonomy=$AUTONOMY timeout=${TIMEOUT}s cap=\$$MAX_USD dry=${RAT_DRY_RUN:-0}"
 
 # ------------------------------------------------------------------ prompt --
 {
@@ -85,6 +88,24 @@ rat_trace preflight ok "timeout=${TIMEOUT}s cap=\$$MAX_USD dry=${RAT_DRY_RUN:-0}
   echo
   echo "Shift id: $RAT_SHIFT_ID   started: $STARTED_ISO"
   echo "Receipt folder: $RAT_RECEIPT"
+  echo
+  echo "## Your autonomy this shift: $AUTONOMY"
+  echo
+  case "$AUTONOMY" in
+    report-only)
+      echo "You may read anything and write only inside your receipt folder."
+      echo "Changing a file in the repository ends the shift as blocked, even if"
+      echo "the change would have been correct. Report what you would have done."
+      ;;
+    assisted)
+      echo "You may change files the plan puts in scope, within the blast radius."
+      echo "A human reads the diff before it goes anywhere."
+      ;;
+    autonomous)
+      echo "You may change files and rerun the verify command yourself."
+      echo "Nothing you do leaves this machine, and nothing merges on its own."
+      ;;
+  esac
   echo
   echo "## The contract"
   echo
@@ -160,11 +181,11 @@ fi
 
 # ------------------------------------------------------------------- guard --
 GUARD_STATUS="ok"
-if rat_py "$RAT_ROOT/bin/lib/guard.py" "$RAT_SETTINGS" "$RAT_RECEIPT/tree-before.txt" > "$RAT_RECEIPT/guard.json" 2>>"$RAT_RECEIPT/stderr.log"; then
+if rat_py "$RAT_ROOT/bin/lib/guard.py" "$RAT_SETTINGS" "$RAT_RECEIPT/tree-before.txt" "$AUTONOMY" > "$RAT_RECEIPT/guard.json" 2>>"$RAT_RECEIPT/stderr.log"; then
   rat_trace guard ok ""
 else
   GUARD_STATUS="blocked"
-  rat_trace guard blocked "see guard.json"
+  rat_trace guard blocked "autonomy=$AUTONOMY see guard.json"
 fi
 CHANGED="$(rat_json_field "$RAT_RECEIPT/guard.json" checked 0)"
 if [ "${CHANGED:-0}" != "0" ] && git -C "$RAT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
@@ -237,6 +258,7 @@ COST="$(rat_py "$RAT_ROOT/bin/lib/sum_cost.py" "$RAT_RECEIPT")"
 RAT_ACT_STATUS="$ACT_STATUS" RAT_ACT_RC="$ACT_RC" RAT_ACT_SECONDS="$ACT_SECONDS" \
 RAT_VERIFY_STATUS="$VERIFY_STATUS" RAT_VERIFY_CMD="$VERIFY_CMD" \
 RAT_GUARD_STATUS="$GUARD_STATUS" RAT_CHANGED="${CHANGED:-0}" \
+RAT_AUTONOMY="$AUTONOMY" \
 RAT_VERDICT="$VERDICT" RAT_COST="$COST" \
 RAT_STARTED="$STARTED_ISO" RAT_ENDED="$(rat_now_iso)" \
 RAT_DURATION="$(( ENDED_EPOCH - STARTED_EPOCH ))" \

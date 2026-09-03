@@ -1,6 +1,6 @@
 ---
 name: pr-hunter
-autonomy: assisted
+autonomy: report-only
 rubrics: [code, safety]
 timeout: 600
 max_usd: 0.75

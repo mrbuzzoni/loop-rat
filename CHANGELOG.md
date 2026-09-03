@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.4.0 - 2026-09-03
+
+- **Autonomy is enforced.** `autonomy:` in a plan was a comment; it is now a
+  rule the guard holds a loop to. A `report-only` loop that changes a file is
+  blocked even when the change was correct, because it said it would not and
+  then did. Levels and their blast radius live in `settings.json`, an unknown
+  level is treated as the strictest, and the level is written into every
+  receipt. The shift's brief now states the level in words, so the model is not
+  guessing at it either.
+- **`rat watch`** - follow a running shift phase by phase and see the report the
+  moment it lands. The receipt tells you what happened; the watch tells you
+  where a shift is spending its night, which is how you find out a loop is slow
+  rather than stuck.
+- **Two loops that watch this repository.** `docs-drift` compares the actual
+  `case` block in `bin/rat` and the actual keys in `settings.json` against every
+  markdown file, and calls a model only when there is a real difference to
+  judge - a clean night costs nothing. `cost-watch` counts shifts, verdicts,
+  timeouts, spend and the direction each is moving, and asks for five lines
+  about it. Its first run found two undocumented commands and four unexplained
+  settings keys, which are now documented.
+- `rat list` shows each loop's autonomy next to its cadence, because "how often"
+  and "how much is it trusted" are the two things you want in one glance.
+- **Fixed:** the guard counted the harness's own receipts as changes to the
+  repository. In a project that had not applied the gitignore block, every
+  report-only loop was blocked by its own paperwork on the first night.
+- New: [docs/loop-design.md](docs/loop-design.md) and
+  [docs/failure-modes.md](docs/failure-modes.md). 70 checks in the smoke test.
+
 ## 0.3.3 - 2026-09-03
 
 - **`bin/rat prune`.** Receipts pile up at a few kilobytes a shift and nothing

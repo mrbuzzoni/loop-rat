@@ -132,10 +132,15 @@ faster than anything you had before:
 (crontab -l 2>/dev/null | grep -v 'bin/rat run-due'; bin/rat cron) | crontab -
 ```
 
+See [docs/loop-design.md](loop-design.md) for the ladder in full and
+[docs/failure-modes.md](failure-modes.md) for what goes wrong when it is skipped.
+
 ## Week one is report-only
 
-Give a new loop no write access for its first week. `autonomy: report-only`,
-empty `verify`, an `act.sh` that only reads. You will learn more from seven
+Give a new loop no write access for its first week. `autonomy: report-only` is
+not a note to yourself - the guard enforces it, and a shift that writes anything
+is blocked and says so in its receipt. Pair it with an empty `verify` and an
+`act.sh` that only reads. You will learn more from seven
 receipts describing what it *would* have done than from one merged PR.
 
 Promote it when you have read a week of receipts and disagreed with none of them.

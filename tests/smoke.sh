@@ -76,8 +76,10 @@ section "the guard"
 # to be blocked before anyone reads the output.
 make_bad_loop() {
   local name="$1"
-  mkdir -p ".claude/loops/$name"
-  printf -- '---\nname: %s\nrubrics: []\ntimeout: 30\n---\nmisbehave\n' "$name" > ".claude/loops/$name/plan.md"
+  local autonomy="${3:-assisted}"       # these loops are meant to write; the
+  mkdir -p ".claude/loops/$name"        # question is what stops them when they do
+  printf -- '---\nname: %s\nautonomy: %s\nrubrics: []\ntimeout: 30\n---\nmisbehave\n' \
+    "$name" "$autonomy" > ".claude/loops/$name/plan.md"
   printf '#!/usr/bin/env bash\n%s\necho reported\n' "$2" > ".claude/loops/$name/act.sh"
   chmod +x ".claude/loops/$name/act.sh"
 }
@@ -156,6 +158,69 @@ bin/shift digest --dry-run >/dev/null 2>&1
 RC=$?
 check "no contract, no shift"              "test \"$RC\" -eq 1"
 mv CONTRACT.md.away CONTRACT.md
+
+section "autonomy"
+mkdir -p .claude/loops/_reporter
+printf -- '---\nname: _reporter\nautonomy: report-only\nrubrics: []\ntimeout: 30\n---\nreport\n' > .claude/loops/_reporter/plan.md
+printf '#!/usr/bin/env bash\nprintf "x\\n" > touched-by-a-reporter.txt\necho reported\n' > .claude/loops/_reporter/act.sh
+chmod +x .claude/loops/_reporter/act.sh
+bin/shift _reporter --dry-run >/dev/null 2>&1
+RC=$?
+check "a report-only loop may not write" "test $RC -eq 3"
+RECEIPT_A="$(dirname "$(find state/receipts -name guard.json | sort | tail -n 1)")"
+check "the block names the level"        "grep -q '\"kind\": \"autonomy\"' '$RECEIPT_A/guard.json'"
+check "the receipt records the level"    "grep -q '\"autonomy\": \"report-only\"' '$RECEIPT_A/receipt.json'"
+check "the brief told the loop the rule" "grep -q 'Your autonomy this shift: report-only' '$RECEIPT_A/prompt.md'"
+rm -f touched-by-a-reporter.txt
+rm -rf .claude/loops/_reporter
+
+mkdir -p .claude/loops/_helper
+printf -- '---\nname: _helper\nautonomy: assisted\nrubrics: []\ntimeout: 30\n---\nhelp\n' > .claude/loops/_helper/plan.md
+printf '#!/usr/bin/env bash\nprintf "x\\n" > touched-by-a-helper.txt\necho reported\n' > .claude/loops/_helper/act.sh
+chmod +x .claude/loops/_helper/act.sh
+bin/shift _helper --dry-run >/dev/null 2>&1
+RC=$?
+check "an assisted loop may write"       "test $RC -le 2"
+rm -f touched-by-a-helper.txt
+rm -rf .claude/loops/_helper
+
+mkdir -p .claude/loops/_typo
+printf -- '---\nname: _typo\nautonomy: autonmous\nrubrics: []\ntimeout: 30\n---\ntypo\n' > .claude/loops/_typo/plan.md
+printf '#!/usr/bin/env bash\nprintf "x\\n" > touched-by-a-typo.txt\necho reported\n' > .claude/loops/_typo/act.sh
+chmod +x .claude/loops/_typo/act.sh
+bin/shift _typo --dry-run >/dev/null 2>&1
+RC=$?
+check "a misspelled level is the strictest" "test $RC -eq 3"
+rm -f touched-by-a-typo.txt
+rm -rf .claude/loops/_typo
+
+mkdir -p .claude/loops/_quiet
+printf -- '---\nname: _quiet\nautonomy: report-only\nrubrics: []\ntimeout: 30\n---\nquiet\n' > .claude/loops/_quiet/plan.md
+printf '#!/usr/bin/env bash\necho "reported and touched nothing"\n' > .claude/loops/_quiet/act.sh
+chmod +x .claude/loops/_quiet/act.sh
+bin/shift _quiet --dry-run >/dev/null 2>&1
+RC=$?
+check "its own receipt is not a change"  "test $RC -le 2"
+rm -rf .claude/loops/_quiet
+
+section "watching a shift"
+( bin/shift digest --dry-run >/dev/null 2>&1 & ) 
+bin/rat watch --timeout 45 > /tmp/rat-watch.out 2>&1
+check "watch follows a live shift"       "grep -q 'phase\|preflight' /tmp/rat-watch.out || grep -q digest /tmp/rat-watch.out"
+check "watch ends with the receipt"      "grep -q 'full receipt' /tmp/rat-watch.out"
+check "watch gives up when nothing runs" "bin/rat watch --timeout 2 >/dev/null 2>&1; test \$? -eq 75"
+
+section "the shipped loops"
+bin/shift docs-drift --dry-run >/dev/null 2>&1
+RC=$?
+check "docs-drift runs end to end"       "test $RC -le 2"
+DRIFT_RECEIPT="$(find state/receipts -type d -name '*-docs-drift' | sort | tail -n 1)"
+check "a clean scan calls no model"      "grep -q 'no model was called' '$DRIFT_RECEIPT/output.md'"
+check "the scan output is kept"          "test -s '$DRIFT_RECEIPT/drift.md'"
+bin/shift cost-watch --dry-run >/dev/null 2>&1
+RC=$?
+check "cost-watch runs end to end"       "test $RC -le 2"
+check "cost-watch counted real shifts"   "grep -q 'shifts across' \"\$(dirname \"\$(find state/receipts -name numbers.md | sort | tail -n 1)\")/numbers.md\""
 
 section "the model bridge"
 mkdir -p state/scratch

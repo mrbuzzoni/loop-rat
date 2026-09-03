@@ -9,20 +9,22 @@ a dry run does not get written. Anything that removes a brake is not a feature.
 Shipped work lives in [CHANGELOG.md](CHANGELOG.md); this file is only the part
 that has not happened yet.
 
-## Standing today - v0.3.3
+## Standing today - v0.4.0
 
 - the contract: rules committed, personal overrides gitignored
 - the guard, the caps, `kill.sh`: denylist, blast radius, spend ledger, halt file
+- autonomy levels the guard enforces, not a comment in a plan
 - receipts and grading: one folder per shift, graded by a second agent
-- three loops, 55 checks, no services
+- five loops, 70 checks, no services
 
 ## 0.4 - read the night faster
 
 The receipts are already right. Reading them is still slower than it should be.
+One of the four has landed; the rest is what 0.4 still owes.
 
 | | |
 |---|---|
-| **`rat watch`** | live tail of a running shift, phase by phase, so you can watch one happen instead of reconstructing it afterwards |
+| ~~**`rat watch`**~~ | **shipped in 0.4.0** - follow a running shift phase by phase, and read the report the moment it lands |
 | **`rat replay <receipt>`** | rerun a shift from its saved prompt, unchanged - the only honest way to ask whether a bad night was the plan's fault or the model's |
 | **weekly digest** | seven nights on one page. The daily digest works; the pattern across a week is what tells you a loop is drifting |
 | **`rat show --diff`** | the patch first, in your pager, and the prose about the patch second |
@@ -64,7 +66,7 @@ The version where someone other than the author can rely on the receipts.
 | | |
 |---|---|
 | **hash-chained trace** | each line carries the hash of the last, so a receipt cannot be quietly rewritten. Including by an agent |
-| **autonomy per directory** | policy in a file: this directory is read-only, that one allows one file per shift. Not judgment at 3am |
+| **autonomy per directory** | per-loop levels landed in 0.4.0; this is the same idea per path, so one loop can be trusted in `docs/` and nowhere else |
 | **`rat audit`** | a week of nights on one page, written for someone who was not there and has to decide whether to keep it running |
 
 ## Never

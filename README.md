@@ -107,9 +107,11 @@ token. stdout becomes `output.md`.
 code is.
 
 **guard** compares the working tree against a fingerprint taken before the shift
-started and blocks on three things: a path from the denylist, more files than the
-blast radius allows, or something shaped like a secret. Work you left on the
-branch yesterday is not blamed on tonight's shift.
+started and blocks on four things: a change a loop's autonomy level does not
+allow, a path from the denylist, more files than the blast radius allows, or
+something shaped like a secret. Work you left on the branch yesterday is not
+blamed on tonight's shift, and a shift writing its own receipt is not a change to
+the repository.
 
 **grade** hands the output to a second agent with a fresh context and the
 rubrics. An agent grading its own shift always finds it excellent, which is why
@@ -121,26 +123,55 @@ updates the checkpoint so tomorrow's shift knows where this one stopped.
 Read it back:
 
 ```bash
+bin/rat list           # what is scheduled, how often, how much it is trusted
 bin/rat status         # last verdict per loop, today's spend, halt state
+bin/rat watch          # follow a running shift, phase by phase, as it happens
 bin/rat receipts 10    # the last ten shifts, newest first
 bin/rat show           # the most recent receipt in full
 bin/rat trace 40       # the phase log
+bin/rat run <loop>     # one shift now, ignoring the schedule
 bin/rat prune          # age out old receipts, once you have too many
 ```
 
 ---
 
-## The three loops that ship with it
+## The five loops that ship with it
 
 | loop | cadence | autonomy | what it does |
 |---|---|---|---|
-| `pr-hunter` | every 30m, 09:00-19:00, weekdays | report only | reads open PRs, says which one to look at first |
+| `pr-hunter` | every 30m, 09:00-19:00, weekdays | report-only | reads open PRs, says which one to look at first |
 | `test-mender` | every 4h, overnight | assisted | fixes **one** failing test, or explains why it will not |
-| `digest` | 06:45 on weekdays | report only | turns last night's receipts into one page |
+| `digest` | 06:45 on weekdays | report-only | turns last night's receipts into one page |
+| `docs-drift` | 07:15 on weekdays | report-only | compares the CLI against its own documentation |
+| `cost-watch` | 07:30 on Mondays | report-only | reads what the other loops cost and where they drift |
+
+`docs-drift` and `cost-watch` are also the two clearest examples of the habit
+that keeps loops cheap: both do their comparing in python, and call a model only
+when there is something to judge. A clean `docs-drift` night costs nothing at
+all.
 
 They are examples, not the product. The shape is the product: a plan that names a
 stop condition, an `act.sh` that gathers before it asks, a rubric that grades,
 a receipt at the end.
+
+### Autonomy is enforced, not implied
+
+Every plan declares a level, and the guard holds it to it:
+
+| level | may change files | a bad night costs you |
+|---|---|---|
+| `report-only` | no - any change blocks the shift | five minutes of reading |
+| `assisted` | yes, within the blast radius | a `git checkout` |
+| `autonomous` | yes, wider radius | a revert, and a bad afternoon |
+
+A `report-only` loop that writes a file is blocked even when the change would
+have been correct, because it said it would not and then did. An unknown level
+is treated as the strictest one, so a typo in a plan can never widen what a loop
+may do. The limits per level live in `settings.json`.
+
+Start every loop at `report-only` and leave it there for a week of receipts you
+actually read. [docs/loop-design.md](docs/loop-design.md) is the rest of that
+argument.
 
 Make your own:
 
@@ -264,6 +295,8 @@ thing stubbed.
 - [docs/writing-a-loop.md](docs/writing-a-loop.md) - the plan, the act script, the stop condition
 - [docs/safety.md](docs/safety.md) - what stops a shift, and in which order
 - [docs/receipts.md](docs/receipts.md) - reading a morning's worth in two minutes
+- [docs/loop-design.md](docs/loop-design.md) - the two questions, the autonomy ladder, the checklist
+- [docs/failure-modes.md](docs/failure-modes.md) - how loops actually fail, and which brake catches each
 - [ROADMAP.md](ROADMAP.md) - what comes next, and the four things that never will
 - [CHANGELOG.md](CHANGELOG.md) - what has already landed, and why
 

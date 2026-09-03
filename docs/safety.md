@@ -60,7 +60,13 @@ discovered two days later.
 ## 5. The guard
 
 `bin/lib/guard.py` runs after every shift, before anything is graded, and blocks
-on three things:
+on four things:
+
+- **autonomy** - the level declared in the loop's plan. `report-only` means no
+  file in the repository may change, and a loop that changes one is blocked even
+  when the change was correct. `assisted` and `autonomous` set their own blast
+  radius in `settings.json`. An unknown level is treated as the strictest, so a
+  typo cannot widen a loop's reach.
 
 - **denylist** - the glob list in `settings.json`. Ships covering `.env`,
   `secrets/`, `credentials/`, key and secret filenames, `migrations/`, `auth/`,
@@ -71,7 +77,8 @@ on three things:
   Slack tokens, matched in the diff and in new files.
 
 It compares against a fingerprint of the working tree taken before `act` ran, so
-only what the shift itself touched counts. Changes you left on the branch
+only what the shift itself touched counts. The harness's own `state/` directory
+is excluded: a shift writing its receipt is not a shift changing the repository. Changes you left on the branch
 yesterday are not held against tonight's shift, and a file that was already dirty
 still counts if the shift modified it again.
 
