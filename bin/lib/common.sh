@@ -63,6 +63,7 @@ rat_run_timeout() {
   local secs="$1"; shift
   "$@" &
   local pid=$!
+  RAT_CHILD_PID="$pid"
   (
     local waited=0
     while kill -0 "$pid" 2>/dev/null; do
@@ -83,6 +84,7 @@ rat_run_timeout() {
   local watchdog=$!
   local rc=0
   wait "$pid" || rc=$?
+  RAT_CHILD_PID=""
   kill "$watchdog" 2>/dev/null || true
   wait "$watchdog" 2>/dev/null || true
   return "$rc"
@@ -100,6 +102,15 @@ rat_lock() {
     printf '%s\n' "$(rat_epoch)" > "$lock/started"
     return 0
   fi
+  local holder
+  holder="$(cat "$lock/pid" 2>/dev/null || true)"
+  if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+    rat_warn "clearing lock for $name - pid $holder is gone"
+    rm -rf "$lock"
+    rat_lock "$name" "$timeout"
+    return $?
+  fi
+
   local started age
   started="$(cat "$lock/started" 2>/dev/null || echo 0)"
   age=$(( $(rat_epoch) - started ))

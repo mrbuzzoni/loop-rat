@@ -92,6 +92,20 @@ Phases that never appear are the interesting ones. No `act` line means the shift
 died before it started - halted, locked, or out of budget, and the `preflight`
 line says which.
 
+## When you need to ask again
+
+```bash
+bin/rat replay state/receipts/2026-09-02/040012-test-mender
+```
+
+Same brief, sent again, nothing re-gathered. The replay lands in its own receipt
+marked `replay_of`, and prints a short comparison: verdicts, files changed, cost,
+and how much of the text the two answers share.
+
+A high similarity means the plan produced the behaviour and you should edit the
+plan. A low one means the brief left too much room, and the fix is a tighter
+output shape or a firmer stop condition - not a better model.
+
 ## Housekeeping
 
 Receipts are gitignored and cost a few kilobytes a shift. Nothing deletes them

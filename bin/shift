@@ -9,6 +9,7 @@
 #
 # Exit codes: 0 pass  2 needs review  3 blocked by guard  4 verify failed
 #             75 skipped (halted, locked, or out of budget)  1 harness error
+#             130 interrupted by hand or by kill.sh - a receipt is still written
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -71,6 +72,38 @@ if ! rat_lock "$RAT_LOOP" "$((TIMEOUT + 120))"; then
   exit 75
 fi
 trap 'rat_unlock "$RAT_LOOP"' EXIT
+
+RAT_CHILD_PID=""
+
+# A shift that is stopped is still a shift that happened. Ctrl-C and kill.sh both
+# land here, and both leave a receipt saying where the night was cut off - an
+# interrupted shift with no paperwork is the one you cannot reason about later.
+on_interrupt() {
+  local signal="$1"
+  trap - INT TERM
+  [ -n "$RAT_CHILD_PID" ] && kill -TERM "$RAT_CHILD_PID" 2>/dev/null
+  rat_trace "${PHASE:-act}" interrupted "signal=$signal"
+
+  if [ -n "${RAT_RECEIPT:-}" ] && [ -d "${RAT_RECEIPT:-}" ]; then
+    RAT_ACT_STATUS="interrupted" RAT_ACT_RC="130" \
+    RAT_ACT_SECONDS="$(( $(rat_epoch) - ${ACT_START:-$(rat_epoch)} ))" \
+    RAT_VERIFY_STATUS="skipped" RAT_VERIFY_CMD="${VERIFY_CMD:-}" \
+    RAT_GUARD_STATUS="not-run" RAT_CHANGED="0" \
+    RAT_VERDICT="interrupted" RAT_AUTONOMY="${AUTONOMY:-report-only}" \
+    RAT_COST="$(rat_py "$RAT_ROOT/bin/lib/sum_cost.py" "$RAT_RECEIPT" 2>/dev/null || echo 0)" \
+    RAT_STARTED="${STARTED_ISO:-$(rat_now_iso)}" RAT_ENDED="$(rat_now_iso)" \
+    RAT_DURATION="$(( $(rat_epoch) - ${STARTED_EPOCH:-$(rat_epoch)} ))" \
+    rat_py "$RAT_ROOT/bin/lib/write_receipt.py" 2>/dev/null || true
+    printf '\n**The shift was interrupted (%s).**\n\nWhatever it had written by then is in this folder.\n' \
+      "$signal" >> "$RAT_RECEIPT/output.md"
+  fi
+
+  rat_unlock "$RAT_LOOP"
+  rat_warn "$RAT_LOOP interrupted - receipt kept at ${RAT_RECEIPT#"$RAT_ROOT"/}"
+  exit 130
+}
+trap 'on_interrupt INT' INT
+trap 'on_interrupt TERM' TERM
 
 RAT_SHIFT_ID="$(date +%H%M%S)"
 export RAT_SHIFT_ID
@@ -151,6 +184,7 @@ export PATH="$RAT_ROOT/bin:$PATH"
 
 rat_py "$RAT_ROOT/bin/lib/guard.py" --snapshot "$RAT_RECEIPT/tree-before.txt" || true
 
+PHASE="act"
 ACT_START="$(rat_epoch)"
 rat_run_timeout "$TIMEOUT" "$ACT" > "$RAT_RECEIPT/output.md" 2> "$RAT_RECEIPT/stderr.log"
 ACT_RC=$?
@@ -168,6 +202,7 @@ else
 fi
 
 # ------------------------------------------------------------------ verify --
+PHASE="verify"
 VERIFY_STATUS="skipped"
 if [ -n "$VERIFY_CMD" ] && [ "$ACT_STATUS" = "ok" ]; then
   if ( cd "$RAT_ROOT" && rat_run_timeout "$TIMEOUT" bash -c "$VERIFY_CMD" ) \
@@ -180,6 +215,7 @@ if [ -n "$VERIFY_CMD" ] && [ "$ACT_STATUS" = "ok" ]; then
 fi
 
 # ------------------------------------------------------------------- guard --
+PHASE="guard"
 GUARD_STATUS="ok"
 if rat_py "$RAT_ROOT/bin/lib/guard.py" "$RAT_SETTINGS" "$RAT_RECEIPT/tree-before.txt" "$AUTONOMY" > "$RAT_RECEIPT/guard.json" 2>>"$RAT_RECEIPT/stderr.log"; then
   rat_trace guard ok ""
@@ -193,6 +229,7 @@ if [ "${CHANGED:-0}" != "0" ] && git -C "$RAT_ROOT" rev-parse --git-dir >/dev/nu
 fi
 
 # ------------------------------------------------------------------- grade --
+PHASE="grade"
 GRADE_MODE="$(rat_setting grading.mode auto)"
 if [ "$GUARD_STATUS" = "blocked" ]; then
   VERDICT="blocked"

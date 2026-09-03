@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# replay - ask the same question again, and see whether the answer holds.
+#
+#   bin/replay state/receipts/2026-09-02/040012-test-mender [--dry-run]
+#
+# A shift is a sample, not a measurement. When one produces something strange,
+# the useful question is whether the plan caused it or the model did - and the
+# only way to separate the two is to send the exact same brief a second time
+# and compare. Nothing is gathered again: the saved prompt is replayed verbatim,
+# so any difference in the answer comes from the model alone.
+#
+# The replay writes its own receipt, marked with the one it came from. It never
+# overwrites the original.
+#
+# Exit codes: 0 done  1 harness error  2 the original receipt is unusable
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+. "$HERE/lib/common.sh"
+
+SOURCE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run) export RAT_DRY_RUN=1; shift ;;
+    -h|--help) awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"; exit 0 ;;
+    -*) rat_err "replay: unknown flag $1"; exit 2 ;;
+    *) SOURCE="$1"; shift ;;
+  esac
+done
+
+if [ -z "$SOURCE" ]; then
+  SOURCE="$(dirname "$(find "$RAT_STATE_DIR/receipts" -name receipt.json 2>/dev/null | sort | tail -n 1)")"
+  [ -d "$SOURCE" ] || { rat_err "no receipts to replay yet"; exit 2; }
+  rat_say "replaying the most recent shift"
+fi
+
+[ -d "$SOURCE" ] || SOURCE="$RAT_ROOT/$SOURCE"
+[ -f "$SOURCE/prompt.md" ] || { rat_err "no prompt.md in $SOURCE - nothing to replay"; exit 2; }
+[ -f "$SOURCE/receipt.json" ] || { rat_err "no receipt.json in $SOURCE"; exit 2; }
+
+RAT_LOOP="$(rat_json_field "$SOURCE/receipt.json" loop replay)"
+export RAT_LOOP
+AUTONOMY="$(rat_json_field "$SOURCE/receipt.json" autonomy report-only)"
+export RAT_AUTONOMY="$AUTONOMY"
+
+if rat_halted; then
+  rat_warn "halted: $(head -n 1 "$RAT_HALT" 2>/dev/null)"
+  exit 75
+fi
+
+RAT_SHIFT_ID="$(date +%H%M%S)"
+export RAT_SHIFT_ID
+RAT_RECEIPT="$RAT_STATE_DIR/receipts/$(rat_today)/$RAT_SHIFT_ID-$RAT_LOOP-replay"
+export RAT_RECEIPT
+mkdir -p "$RAT_RECEIPT"
+cp "$SOURCE/prompt.md" "$RAT_RECEIPT/prompt.md"
+
+STARTED_EPOCH="$(rat_epoch)"
+STARTED_ISO="$(rat_now_iso)"
+ORIGINAL="${SOURCE#"$RAT_ROOT"/}"
+rat_trace replay start "of=$ORIGINAL autonomy=$AUTONOMY"
+
+TIMEOUT="$(rat_setting caps.timeout_seconds 900)"
+rat_py "$RAT_ROOT/bin/lib/guard.py" --snapshot "$RAT_RECEIPT/tree-before.txt" || true
+
+rat_run_timeout "$TIMEOUT" bash -c \
+  'cat "$RAT_RECEIPT/prompt.md" | "$RAT_ROOT/bin/rat-agent" --tag act' \
+  > "$RAT_RECEIPT/output.md" 2> "$RAT_RECEIPT/stderr.log"
+RC=$?
+
+GUARD_STATUS="ok"
+rat_py "$RAT_ROOT/bin/lib/guard.py" "$RAT_SETTINGS" "$RAT_RECEIPT/tree-before.txt" "$AUTONOMY" \
+  > "$RAT_RECEIPT/guard.json" 2>>"$RAT_RECEIPT/stderr.log" || GUARD_STATUS="blocked"
+CHANGED="$(rat_json_field "$RAT_RECEIPT/guard.json" checked 0)"
+
+COST="$(rat_py "$RAT_ROOT/bin/lib/sum_cost.py" "$RAT_RECEIPT")"
+[ "$RC" -eq 0 ] && VERDICT="replayed" || VERDICT="fail"
+[ "$GUARD_STATUS" = "blocked" ] && VERDICT="blocked"
+
+RAT_ACT_STATUS="$([ "$RC" -eq 0 ] && echo ok || echo error)" RAT_ACT_RC="$RC" \
+RAT_ACT_SECONDS="$(( $(rat_epoch) - STARTED_EPOCH ))" \
+RAT_VERIFY_STATUS="skipped" RAT_VERIFY_CMD="" \
+RAT_GUARD_STATUS="$GUARD_STATUS" RAT_CHANGED="${CHANGED:-0}" \
+RAT_VERDICT="$VERDICT" RAT_COST="$COST" \
+RAT_STARTED="$STARTED_ISO" RAT_ENDED="$(rat_now_iso)" \
+RAT_DURATION="$(( $(rat_epoch) - STARTED_EPOCH ))" \
+RAT_REPLAY_OF="$ORIGINAL" \
+rat_py "$RAT_ROOT/bin/lib/write_receipt.py"
+
+# The comparison is the point, so make it, rather than leaving two files around.
+rat_py "$RAT_ROOT/bin/lib/compare.py" "$SOURCE" "$RAT_RECEIPT" > "$RAT_RECEIPT/compared.md"
+cat "$RAT_RECEIPT/compared.md"
+
+rat_trace replay "$VERDICT" "cost=\$$COST dir=${RAT_RECEIPT#"$RAT_ROOT"/}"

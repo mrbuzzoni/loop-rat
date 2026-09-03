@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.1 - 2026-09-03
+
+- **An interrupted shift still leaves a receipt.** Ctrl-C and `kill.sh` used to
+  end a night with a lock, a half-written folder and no record. Both now land in
+  a signal handler that stops the child, writes a receipt marked `interrupted`
+  with the phase it was cut off in, and releases the lock. A night you cannot
+  reconstruct is worse than a night that failed.
+- **`rat replay`** - send a saved brief again, unchanged, and compare the two
+  answers. Nothing is re-gathered, so a difference came from the model rather
+  than from the world moving. Answers that agree point at the plan; answers that
+  disagree point at a brief with too much room in it.
+- **`rat doctor` validates the configuration**, not just the machine. It reads
+  every plan and the schedule and catches what would bite at 3am: a scheduled
+  loop with no folder, a rubric that does not exist, `autonomy: report_only`
+  with an underscore, a per-shift cap larger than the whole day's, a cadence
+  that is not a cadence, a verify command that is not valid shell.
+- **A lock whose process is gone is cleared, not obeyed.** Staleness was decided
+  by the clock alone, so a crashed shift could hold its loop hostage for the
+  length of its own timeout.
+- `rat receipts` takes `--loop`, `--verdict`, `--since 3d` and `--json`;
+  `rat status --json` prints the same state a status bar would want.
+- `rat prune` rotates `trace.log` past twenty thousand lines. No shift trims its
+  own log - a loop that edits the record of what it did is not auditable.
+- 87 checks in the smoke test.
+
 ## 0.4.0 - 2026-09-03
 
 - **Autonomy is enforced.** `autonomy:` in a plan was a comment; it is now a

@@ -9,23 +9,24 @@ a dry run does not get written. Anything that removes a brake is not a feature.
 Shipped work lives in [CHANGELOG.md](CHANGELOG.md); this file is only the part
 that has not happened yet.
 
-## Standing today - v0.4.0
+## Standing today - v0.4.1
 
 - the contract: rules committed, personal overrides gitignored
 - the guard, the caps, `kill.sh`: denylist, blast radius, spend ledger, halt file
 - autonomy levels the guard enforces, not a comment in a plan
 - receipts and grading: one folder per shift, graded by a second agent
-- five loops, 70 checks, no services
+- five loops, 87 checks, no services
 
 ## 0.4 - read the night faster
 
 The receipts are already right. Reading them is still slower than it should be.
-One of the four has landed; the rest is what 0.4 still owes.
+Two of the four have landed; the digest rollup and `rat show --diff` are what
+0.4 still owes.
 
 | | |
 |---|---|
 | ~~**`rat watch`**~~ | **shipped in 0.4.0** - follow a running shift phase by phase, and read the report the moment it lands |
-| **`rat replay <receipt>`** | rerun a shift from its saved prompt, unchanged - the only honest way to ask whether a bad night was the plan's fault or the model's |
+| ~~**`rat replay <receipt>`**~~ | **shipped in 0.4.1** - the saved brief again, unchanged, with a comparison of the two answers |
 | **weekly digest** | seven nights on one page. The daily digest works; the pattern across a week is what tells you a loop is drifting |
 | **`rat show --diff`** | the patch first, in your pager, and the prose about the patch second |
 

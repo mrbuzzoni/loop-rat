@@ -32,6 +32,8 @@ receipt = {
     "cost_usd": float(env["RAT_COST"] or 0),
     "dry_run": env.get("RAT_DRY_RUN", "0") == "1",
 }
+if env.get("RAT_REPLAY_OF"):
+    receipt["replay_of"] = env["RAT_REPLAY_OF"]
 with open(os.path.join(env["RAT_RECEIPT"], "receipt.json"), "w") as fh:
     json.dump(receipt, fh, indent=2)
     fh.write("\n")

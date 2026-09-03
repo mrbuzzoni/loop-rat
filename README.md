@@ -94,7 +94,8 @@ preflight → act → verify → guard → grade → receipt
 ```
 
 **preflight** refuses to start if `state/HALT` exists, if today's spend is gone,
-or if the same loop is already running. Then it composes the brief: the
+or if the same loop is already running - and a lock whose process is gone is
+cleared rather than obeyed. Then it composes the brief: the
 contract, your local overrides, the rubrics this loop is graded against, the
 cursor the last shift left, and the plan.
 
@@ -120,6 +121,10 @@ the grader never sees itself as the author.
 **receipt** writes `receipt.json`, appends one line per phase to `trace.log`, and
 updates the checkpoint so tomorrow's shift knows where this one stopped.
 
+A shift stopped by hand or by `kill.sh` still gets all of that: the receipt is
+marked `interrupted` and says which phase it was cut off in. A night you cannot
+reconstruct is worse than a night that failed.
+
 Read it back:
 
 ```bash
@@ -130,8 +135,25 @@ bin/rat receipts 10    # the last ten shifts, newest first
 bin/rat show           # the most recent receipt in full
 bin/rat trace 40       # the phase log
 bin/rat run <loop>     # one shift now, ignoring the schedule
+bin/rat replay         # ask the same brief again, and compare the two answers
 bin/rat prune          # age out old receipts, once you have too many
+bin/rat doctor         # validate the machine and the configuration
 ```
+
+Anything a script needs is machine readable: `rat status --json`, and
+`rat receipts --json` with `--loop`, `--verdict` and `--since 3d` filters.
+
+### When a shift surprises you
+
+```bash
+bin/rat replay state/receipts/2026-09-02/040012-test-mender
+```
+
+The saved brief is sent again, unchanged, and nothing is gathered a second time -
+so any difference in the answer came from the model, not from the world moving.
+The replay writes its own receipt, marked with the one it came from, and prints
+how far the two answers agree. Two answers that agree point at the plan; two that
+disagree point at a brief that is under-specified.
 
 ---
 

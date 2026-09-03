@@ -4,11 +4,13 @@
 #   rat list                 what is scheduled, and whether it is paused
 #   rat run <name>           run one shift now
 #   rat run-due              run every loop the schedule says is due (cron uses this)
-#   rat status               last verdict per loop, today's spend, halt state
+#   rat status [--json]      last verdict per loop, today's spend, halt state
 #   rat receipts [n]         the last n receipts, newest first
+#                            filters: --loop NAME --verdict V --since 3d --json
 #   rat show [receipt]       read one receipt in full
 #   rat trace [n]            tail the trace log
 #   rat watch [loop]         follow a running shift, phase by phase, until it ends
+#   rat replay [receipt]     ask the same brief again and compare the two answers
 #   rat prune [--apply]      age out old receipts (lists them first)
 #   rat new <name>           scaffold a new loop from the template
 #   rat cron                 print crontab lines for the current schedule
@@ -24,7 +26,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 . "$HERE/lib/common.sh"
 
-RAT_VERSION="0.4.0"
+RAT_VERSION="0.4.1"
 SCHEDULE="$RAT_LOOPS_DIR/schedule.yml"
 SCHED_PY="$RAT_ROOT/bin/lib/schedule.py"
 
@@ -54,6 +56,32 @@ cmd_run_due() {
 }
 
 cmd_status() {
+  if [ "${1:-}" = "--json" ]; then
+    rat_py - "$RAT_CHECKPOINT" "$RAT_BUDGET" "$(rat_today)" "$RAT_HALT" <<'PY'
+import json, os, sys
+checkpoint, budget, day, halt = sys.argv[1:5]
+
+
+def read(path):
+    try:
+        with open(path) as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+spent = float(read(budget).get("days", {}).get(day, 0.0))
+state = {
+    "halted": os.path.exists(halt),
+    "halt_reason": open(halt).read().strip() if os.path.exists(halt) else None,
+    "spent_today_usd": round(spent, 4),
+    "loops": read(checkpoint).get("loops", {}),
+}
+print(json.dumps(state, indent=2))
+PY
+    return 0
+  fi
+
   if rat_halted; then
     rat_err "HALTED - $(head -n 1 "$RAT_HALT")"
     echo "  clear it with: loop resume"
@@ -86,26 +114,19 @@ PY
 }
 
 cmd_receipts() {
-  local limit="${1:-10}"
-  if [ -z "$(find "$RAT_STATE_DIR/receipts" -name receipt.json 2>/dev/null | head -n 1)" ]; then
-    rat_say "no receipts yet - try: bin/shift digest --dry-run"
-    return 0
-  fi
-  find "$RAT_STATE_DIR/receipts" -name receipt.json 2>/dev/null | sort -r | head -n "$limit" |
-  while read -r file; do
-    rat_py - "$file" <<'PY'
-import json, os, signal, sys
-signal.signal(signal.SIGPIPE, signal.SIG_DFL)
-with open(sys.argv[1]) as fh:
-    r = json.load(fh)
-folder = os.path.dirname(sys.argv[1])
-print("%-11s %-14s %-13s %5ss  $%-8.4f %s" % (
-    os.path.basename(os.path.dirname(folder)),      # the local date it ran
-    r.get("loop", ""), r.get("verdict", ""),
-    r.get("duration_seconds", 0), float(r.get("cost_usd", 0) or 0),
-    os.path.basename(folder)))
-PY
+  local limit="10"
+  local passthrough=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --loop|--verdict|--since) passthrough="$passthrough $1 $2"; shift 2 ;;
+      --json) passthrough="$passthrough --json"; shift ;;
+      -*) rat_err "receipts: unknown flag $1"; return 2 ;;
+      *) limit="$1"; shift ;;
+    esac
   done
+  # shellcheck disable=SC2086
+  rat_py "$RAT_ROOT/bin/lib/list_receipts.py" "$RAT_STATE_DIR/receipts" \
+    --limit "$limit" $passthrough
 }
 
 cmd_show() {
@@ -202,12 +223,34 @@ cmd_watch() {
   return 75
 }
 
+# trace.log is append-only and never rotated by a shift, on purpose: a loop that
+# trims its own log is a loop you cannot audit. Pruning is the moment a person is
+# already deciding what history to keep, so it happens here.
+rotate_trace() {
+  local max_lines=20000
+  [ -f "$RAT_TRACE" ] || return 0
+  local lines
+  lines="$(wc -l < "$RAT_TRACE" | tr -d ' ')"
+  [ "$lines" -le "$max_lines" ] && return 0
+  if [ "${1:-}" = "--apply" ]; then
+    tail -n "$max_lines" "$RAT_TRACE" > "$RAT_TRACE.new"
+    mv "$RAT_TRACE" "$RAT_TRACE.1"
+    mv "$RAT_TRACE.new" "$RAT_TRACE"
+    printf 'rotated trace.log (%s lines, kept the last %s, older lines in trace.log.1)\n' \
+      "$lines" "$max_lines"
+  else
+    printf 'would rotate trace.log (%s lines, over the %s line mark)\n' \
+      "$lines" "$max_lines"
+  fi
+}
+
 cmd_prune() {
   local keep keep_failed
   keep="$(rat_setting receipts.keep_days 30)"
   keep_failed="$(rat_setting receipts.keep_failed_days 90)"
   printf 'keeping passes for %s days, everything else for %s\n\n' "$keep" "$keep_failed"
   rat_py "$RAT_ROOT/bin/lib/prune.py" "$RAT_STATE_DIR/receipts" "$keep" "$keep_failed" "$@"
+  rotate_trace "${1:-}"
 }
 
 cmd_new() {
@@ -233,41 +276,39 @@ cmd_doctor() {
       printf '  FAIL  %s\n' "$1"; problems=$((problems + 1))
     fi
   }
-  rat_say "harness"
+
+  rat_say "the machine"
   check "python3 on PATH"                 "command -v python3"
   check "git on PATH"                     "command -v git"
-  check "CONTRACT.md exists"              "test -s '$RAT_ROOT/CONTRACT.md'"
-  check "settings.json parses"            "python3 -c \"import json;json.load(open('$RAT_SETTINGS'))\""
-  check "schedule.yml parses"             "rat_py '$SCHED_PY' list '$SCHEDULE'"
   check "state/ is writable"              "touch '$RAT_STATE_DIR/.probe' && rm -f '$RAT_STATE_DIR/.probe'"
   check "kill.sh is executable"           "test -x '$RAT_ROOT/kill.sh'"
   check "local overrides stay untracked"  "git -C '$RAT_ROOT' check-ignore -q contract.local.md || ! git -C '$RAT_ROOT' rev-parse --git-dir"
 
-  rat_say "loops"
-  rat_py "$SCHED_PY" list "$SCHEDULE" | while IFS=$'\t' read -r name _ _ _ _; do
-    local dir="$RAT_LOOPS_DIR/$name"
-    if [ -f "$dir/plan.md" ] && [ -x "$dir/act.sh" ]; then
-      printf '  ok    %s (plan + act.sh)\n' "$name"
-    else
-      printf '  FAIL  %s is scheduled but has no plan.md or act.sh\n' "$name"
-    fi
-  done
-
-  rat_say "model"
-  local agent; agent="$(rat_setting agent.command claude)"
+  local agent
+  agent="$(rat_setting agent.command claude)"
   if command -v "$agent" >/dev/null 2>&1; then
     printf '  ok    %s found at %s\n' "$agent" "$(command -v "$agent")"
   else
-    printf '  warn  %s not on PATH - shifts will run as dry runs\n' "$agent"
+    printf '  warn  %s not on PATH - every shift will run as a dry run\n' "$agent"
+  fi
+
+  if rat_halted; then
+    printf '  warn  state/HALT is present - nothing scheduled will start\n'
   fi
 
   echo
-  if [ "$problems" -eq 0 ]; then
-    rat_say "no blocking problems. try: bin/shift digest --dry-run"
-  else
-    rat_err "$problems problem(s) above"
-    return 1
+  rat_say "the configuration"
+  local config_rc=0
+  rat_py "$RAT_ROOT/bin/lib/validate.py" || config_rc=$?
+
+  if [ "$problems" -eq 0 ] && [ "$config_rc" -eq 0 ]; then
+    echo
+    rat_say "nothing blocking. try: bin/shift digest --dry-run"
+    return 0
   fi
+  echo
+  rat_err "$problems machine problem(s); the configuration report is above"
+  return 1
 }
 
 cmd_resume() {
@@ -288,6 +329,7 @@ case "${1:-}" in
   new)       shift; cmd_new "$@" ;;
   prune)     shift; cmd_prune "$@" ;;
   watch)     shift; cmd_watch "$@" ;;
+  replay)    shift; "$RAT_ROOT/bin/replay" "$@" ;;
   cron)      shift; rat_py "$SCHED_PY" cron "$SCHEDULE" "$RAT_ROOT" ;;
   doctor)    shift; cmd_doctor "$@" ;;
   resume)    shift; cmd_resume "$@" ;;

@@ -110,12 +110,25 @@ rm -f already-dirty.txt
 rm -rf .claude/loops/_quiet
 
 section "the locks"
+# The holder has to be alive: a lock whose process is gone is stale by
+# definition, and the harness clears it instead of blocking the loop forever.
+sleep 30 &
+HOLDER=$!
 mkdir -p state/locks/digest.lock
 date +%s > state/locks/digest.lock/started
-echo 99999 > state/locks/digest.lock/pid
+echo "$HOLDER" > state/locks/digest.lock/pid
 bin/shift digest --dry-run >/dev/null 2>&1
 RC=$?
-check "a second shift will not overlap"    "test \"$RC\" -eq 75"
+check "a live holder blocks a second shift" "test $RC -eq 75"
+kill "$HOLDER" 2>/dev/null
+wait "$HOLDER" 2>/dev/null
+
+mkdir -p state/locks/digest.lock
+date +%s > state/locks/digest.lock/started
+echo 999999 > state/locks/digest.lock/pid
+bin/shift digest --dry-run >/dev/null 2>&1
+RC=$?
+check "a dead holder is cleared, not obeyed" "test $RC -le 2"
 rm -rf state/locks/digest.lock
 
 section "the budget"
@@ -296,6 +309,50 @@ touch -t "$(date -v-40d +%Y%m%d%H%M 2>/dev/null || date -d '40 days ago' +%Y%m%d
 check "a 40-day failure is kept longer"    "bin/rat prune | grep -q 'would remove 1'"
 rm -rf state/receipts/2026-01-0*
 
+section "being interrupted"
+mkdir -p .claude/loops/_slowpoke
+printf -- '---\nname: _slowpoke\nautonomy: report-only\nrubrics: []\ntimeout: 120\n---\nsleep\n' > .claude/loops/_slowpoke/plan.md
+printf '#!/usr/bin/env bash\necho "the long part"\nsleep 60\n' > .claude/loops/_slowpoke/act.sh
+chmod +x .claude/loops/_slowpoke/act.sh
+( bin/shift _slowpoke --dry-run >/dev/null 2>&1 & )
+sleep 3
+./kill.sh "smoke: the interrupt path" >/dev/null 2>&1
+sleep 3
+SLOW_RECEIPT="$(find state/receipts -type d -name '*_slowpoke' | sort | tail -n 1)"
+check "an interrupted shift leaves a receipt" "test -f '$SLOW_RECEIPT/receipt.json'"
+check "and it is marked interrupted"          "grep -q '\"verdict\": \"interrupted\"' '$SLOW_RECEIPT/receipt.json'"
+check "the trace says where it was cut"       "grep -q 'status=interrupted' state/trace.log"
+check "the lock was released"                 "test ! -d state/locks/_slowpoke.lock"
+bin/rat resume >/dev/null 2>&1
+rm -rf .claude/loops/_slowpoke
+
+section "the validator"
+check "a sound configuration passes"          "python3 bin/lib/validate.py >/dev/null"
+cp .claude/loops/digest/plan.md /tmp/rat-plan.bak
+python3 - <<'PY'
+p = ".claude/loops/digest/plan.md"
+s = open(p).read().replace("autonomy: report-only", "autonomy: report_only")
+s = s.replace("rubrics: [writing, safety]", "rubrics: [writing, nonsense]")
+open(p, "w").write(s)
+PY
+python3 bin/lib/validate.py > /tmp/rat-validate.out 2>&1
+RC=$?
+check "a bad autonomy level is caught"        "test $RC -eq 1 && grep -q 'report_only' /tmp/rat-validate.out"
+check "a missing rubric is caught"            "grep -q 'nonsense' /tmp/rat-validate.out"
+cp /tmp/rat-plan.bak .claude/loops/digest/plan.md
+check "and it passes again once fixed"        "python3 bin/lib/validate.py >/dev/null"
+
+section "replaying a shift"
+bin/shift digest --dry-run >/dev/null 2>&1
+ORIGINAL="$(find state/receipts -type d -name '*-digest' | sort | tail -n 1)"
+bin/rat replay "$ORIGINAL" --dry-run > /tmp/rat-replay.out 2>&1
+RC=$?
+check "replay runs from the saved prompt"     "test $RC -eq 0"
+check "it compares the two answers"           "grep -q 'similarity' /tmp/rat-replay.out"
+REPLAY="$(find state/receipts -type d -name '*-replay' | sort | tail -n 1)"
+check "the replay names its original"         "grep -q 'replay_of' '$REPLAY/receipt.json'"
+check "the original was not overwritten"      "test -f '$ORIGINAL/receipt.json'"
+
 section "the front door"
 check "rat list prints the schedule"      "bin/rat list | grep -q pr-hunter"
 check "rat status prints today's spend"   "bin/rat status | grep -q today"
@@ -305,6 +362,10 @@ check "rat trace tails the log"           "bin/rat trace 5 | grep -q phase="
 check "rat new scaffolds a loop"          "bin/rat new probe && test -x .claude/loops/probe/act.sh"
 check "a scaffolded loop runs"             "bin/shift probe --dry-run; test \$? -le 2"
 check "rat prune runs with nothing to do"  "bin/rat prune | grep -q 'nothing to prune\|would remove 0'"
+check "receipts filter by loop"           "bin/rat receipts --loop digest 20 | grep -q digest"
+check "receipts filter out what is absent" "bin/rat receipts --loop nosuchloop 20 | grep -q 'nothing matches'"
+check "receipts speak json"               "bin/rat receipts 3 --json | python3 -c 'import json,sys; json.load(sys.stdin)'"
+check "status speaks json"                "bin/rat status --json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert \"loops\" in d'"
 check "rat doctor reports"                "bin/rat doctor >/dev/null 2>&1; test \$? -le 1"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
