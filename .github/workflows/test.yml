@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "0 6 * * 1"      # Mondays: a harness nobody pushes to still rots
 
 permissions:
   contents: read

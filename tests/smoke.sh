@@ -213,6 +213,24 @@ check "a hung shift is killed at its cap"  "test $ELAPSED -lt 15"
 check "the timeout is in the trace"        "grep -q 'phase=act status=timeout' state/trace.log"
 rm -rf .claude/loops/_slow
 
+section "pruning"
+mkdir -p state/receipts/2026-01-01/010101-digest state/receipts/2026-01-02/020202-digest
+printf '{"verdict":"pass","loop":"digest"}\n' > state/receipts/2026-01-01/010101-digest/receipt.json
+printf '{"verdict":"needs-review","loop":"digest"}\n' > state/receipts/2026-01-02/020202-digest/receipt.json
+touch -t 202601010101 state/receipts/2026-01-01/010101-digest
+touch -t 202601020202 state/receipts/2026-01-02/020202-digest
+check "a dry prune deletes nothing"        "bin/rat prune | grep -q 'would remove' && test -d state/receipts/2026-01-01/010101-digest"
+check "--apply removes what aged out"      "bin/rat prune --apply >/dev/null && test ! -d state/receipts/2026-01-01/010101-digest"
+mkdir -p state/receipts/2026-01-03/030303-digest
+printf '{"verdict":"pass","loop":"digest"}\n' > state/receipts/2026-01-03/030303-digest/receipt.json
+touch -t "$(date -v-40d +%Y%m%d%H%M 2>/dev/null || date -d '40 days ago' +%Y%m%d%H%M)" state/receipts/2026-01-03/030303-digest
+check "a 40-day pass is pruned"            "bin/rat prune | grep -q 'would remove 1'"
+mkdir -p state/receipts/2026-01-04/040404-digest
+printf '{"verdict":"blocked","loop":"digest"}\n' > state/receipts/2026-01-04/040404-digest/receipt.json
+touch -t "$(date -v-40d +%Y%m%d%H%M 2>/dev/null || date -d '40 days ago' +%Y%m%d%H%M)" state/receipts/2026-01-04/040404-digest
+check "a 40-day failure is kept longer"    "bin/rat prune | grep -q 'would remove 1'"
+rm -rf state/receipts/2026-01-0*
+
 section "the front door"
 check "rat list prints the schedule"      "bin/rat list | grep -q pr-hunter"
 check "rat status prints today's spend"   "bin/rat status | grep -q today"
@@ -221,6 +239,7 @@ check "rat show opens the last receipt"   "bin/rat show | grep -q verdict"
 check "rat trace tails the log"           "bin/rat trace 5 | grep -q phase="
 check "rat new scaffolds a loop"          "bin/rat new probe && test -x .claude/loops/probe/act.sh"
 check "a scaffolded loop runs"             "bin/shift probe --dry-run; test \$? -le 2"
+check "rat prune runs with nothing to do"  "bin/rat prune | grep -q 'nothing to prune\|would remove 0'"
 check "rat doctor reports"                "bin/rat doctor >/dev/null 2>&1; test \$? -le 1"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

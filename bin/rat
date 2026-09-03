@@ -8,6 +8,7 @@
 #   rat receipts [n]         the last n receipts, newest first
 #   rat show [receipt]       read one receipt in full
 #   rat trace [n]            tail the trace log
+#   rat prune [--apply]      age out old receipts (lists them first)
 #   rat new <name>           scaffold a new loop from the template
 #   rat cron                 print crontab lines for the current schedule
 #   rat doctor               check the setup before you trust it overnight
@@ -22,7 +23,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 . "$HERE/lib/common.sh"
 
-RAT_VERSION="0.3.2"
+RAT_VERSION="0.3.3"
 SCHEDULE="$RAT_LOOPS_DIR/schedule.yml"
 SCHED_PY="$RAT_ROOT/bin/lib/schedule.py"
 
@@ -119,6 +120,14 @@ cmd_show() {
   if [ -s "$dir/guard.json" ]; then echo; rat_say "-- what the guard saw"; head -n 30 "$dir/guard.json"; fi
 }
 
+cmd_prune() {
+  local keep keep_failed
+  keep="$(rat_setting receipts.keep_days 30)"
+  keep_failed="$(rat_setting receipts.keep_failed_days 90)"
+  printf 'keeping passes for %s days, everything else for %s\n\n' "$keep" "$keep_failed"
+  rat_py "$RAT_ROOT/bin/lib/prune.py" "$RAT_STATE_DIR/receipts" "$keep" "$keep_failed" "$@"
+}
+
 cmd_new() {
   local name="${1:-}"
   [ -n "$name" ] || { rat_err "usage: loop new <name>"; return 2; }
@@ -195,6 +204,7 @@ case "${1:-}" in
   show)      shift; cmd_show "$@" ;;
   trace)     shift; tail -n "${1:-20}" "$RAT_TRACE" 2>/dev/null || rat_say "no trace yet" ;;
   new)       shift; cmd_new "$@" ;;
+  prune)     shift; cmd_prune "$@" ;;
   cron)      shift; rat_py "$SCHED_PY" cron "$SCHEDULE" "$RAT_ROOT" ;;
   doctor)    shift; cmd_doctor "$@" ;;
   resume)    shift; cmd_resume "$@" ;;

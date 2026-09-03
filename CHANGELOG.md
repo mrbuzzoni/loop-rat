@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.3 - 2026-09-03
+
+- **`bin/rat prune`.** Receipts pile up at a few kilobytes a shift and nothing
+  removed them. It lists what has aged out and deletes only when asked twice
+  (`--apply`), because a command that erases the record of unattended runs
+  should not be a single keystroke.
+- Two ages instead of one: `keep_days` (30) for shifts that passed,
+  `keep_failed_days` (90) for anything blocked, failed, or waiting on review. A
+  clean shift is evidence nobody read; the blocked one from July is what you go
+  looking for in September.
+- The test workflow also runs on Mondays now. A harness nobody pushes to still
+  rots - a python release, a change in `git status` output - and hearing that
+  from a scheduled run beats hearing it from a 3am shift.
+
 ## 0.3.2 - 2026-09-02
 
 - **The schedule is the only schedule.** `bin/rat cron` installs one `run-due`

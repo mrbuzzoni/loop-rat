@@ -7,5 +7,9 @@ The rat writes here. Nothing in this folder is source code.
   locks/        one folder per running shift, so two never overlap
   HALT          written by kill.sh; while it exists, nothing starts
 
+Receipts pile up at a few kilobytes a shift and nothing removes them on a
+schedule. `bin/rat prune` ages them out when you decide to - passes after 30
+days, anything that failed or wanted review after 90.
+
 All of it is gitignored. Delete the whole folder and the harness rebuilds it on
 the next shift - you only lose the history, never the setup.

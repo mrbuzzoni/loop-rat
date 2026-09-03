@@ -38,6 +38,7 @@
     "mode": "auto"
   },
   "receipts": {
-    "keep_days": 30
+    "keep_days": 30,
+    "keep_failed_days": 90
   }
 }

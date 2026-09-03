@@ -94,13 +94,23 @@ line says which.
 
 ## Housekeeping
 
-Receipts are gitignored and cost a few kilobytes a shift. `keep_days` in
-`settings.json` is what you intend to keep; nothing deletes them for you, on
-purpose - a cleanup loop that runs unattended and removes evidence of unattended
-runs is the one loop you should not build first.
-
-To prune by hand:
+Receipts are gitignored and cost a few kilobytes a shift. Nothing deletes them
+on a schedule, on purpose - a cleanup loop that runs unattended and removes the
+evidence of unattended runs is the one loop you should not build first. Pruning
+is a thing you do, with your hands, when you decide to:
 
 ```bash
-find state/receipts -mindepth 1 -maxdepth 1 -type d -mtime +30 -exec rm -rf {} +
+bin/rat prune            # lists what has aged out, deletes nothing
+bin/rat prune --apply    # actually removes them
 ```
+
+Two ages, set in `settings.json` under `receipts`:
+
+| setting | default | applies to |
+|---|---|---|
+| `keep_days` | 30 | shifts that passed |
+| `keep_failed_days` | 90 | blocked, failed, needs-review, unreadable |
+
+The split is the whole point. A clean shift is evidence you never read. The one
+that was blocked in July is the one you go looking for in September, when
+something similar happens and you want to know what you decided last time.

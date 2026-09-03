@@ -1,5 +1,8 @@
 # Loop Rat
 
+[![tests](https://github.com/mrbuzzoni/loop-rat/actions/workflows/test.yml/badge.svg)](https://github.com/mrbuzzoni/loop-rat/actions/workflows/test.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 An autonomous loop agent. It is a folder you drop into a repository: it wakes
 your coding agent on a schedule, keeps it inside rules you wrote down, grades
 what it did with a second agent, and leaves a dated receipt you read in the
@@ -122,6 +125,7 @@ bin/rat status         # last verdict per loop, today's spend, halt state
 bin/rat receipts 10    # the last ten shifts, newest first
 bin/rat show           # the most recent receipt in full
 bin/rat trace 40       # the phase log
+bin/rat prune          # age out old receipts, once you have too many
 ```
 
 ---
