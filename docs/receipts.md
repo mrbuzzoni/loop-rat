@@ -92,6 +92,26 @@ Phases that never appear are the interesting ones. No `act` line means the shift
 died before it started - halted, locked, or out of budget, and the `preflight`
 line says which.
 
+## When you need to trust it
+
+```bash
+bin/rat audit --days 7
+```
+
+Every trace line carries the hash of the line before it, and every receipt line
+carries the hash the receipt had when it was written. `rat audit` recomputes both
+and says whether anything was edited or removed afterwards - then summarises the
+window and lists what still needs a person.
+
+It exits non-zero when the record does not add up, so it works as a monitoring
+check rather than only as something you read. A rotated log is not an error: the
+first kept line has no predecessor left, and the audit says so instead of crying
+tampering.
+
+The reason this exists is narrow and worth stating plainly: the harness runs an
+agent that can write to this disk. A log that only that agent can vouch for is
+not evidence.
+
 ## When you need to ask again
 
 ```bash

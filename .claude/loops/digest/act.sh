@@ -2,15 +2,26 @@
 # act.sh - gather last night's receipts, ask for one page of prose.
 set -uo pipefail
 
-SUMMARY="$RAT_RECEIPT/last-24h.md"
+# Mondays get the week. A single night tells you what happened; seven tell you
+# whether a loop is drifting, and drift is the thing you cannot see one night at
+# a time.
+if [ "$(date +%u)" = "1" ]; then
+  WINDOW_HOURS=168
+  WINDOW_NAME="week"
+else
+  WINDOW_HOURS=24
+  WINDOW_NAME="night"
+fi
+SUMMARY="$RAT_RECEIPT/last-$WINDOW_HOURS-hours.md"
 OUT_DIR="$RAT_ROOT/state/digest"
 mkdir -p "$OUT_DIR"
 
-python3 - "$RAT_ROOT/state/receipts" > "$SUMMARY" <<'PY'
+python3 - "$RAT_ROOT/state/receipts" "$WINDOW_HOURS" > "$SUMMARY" <<'PY'
 import json, os, sys, time
 
 root = sys.argv[1]
-cutoff = time.time() - 24 * 3600
+hours = int(sys.argv[2])
+cutoff = time.time() - hours * 3600
 rows = []
 for dirpath, _dirnames, filenames in os.walk(root):
     if "receipt.json" not in filenames:
@@ -26,11 +37,11 @@ for dirpath, _dirnames, filenames in os.walk(root):
 
 rows.sort(key=lambda r: r[1].get("started", ""))
 if not rows:
-    print("No shift produced a receipt in the last 24 hours.")
+    print("No shift produced a receipt in the last %d hours." % hours)
     raise SystemExit(0)
 
 total = sum(float(r[1].get("cost_usd", 0) or 0) for r in rows)
-print("%d shifts, $%.2f spent." % (len(rows), total))
+print("%d shifts over %d hours, $%.2f spent." % (len(rows), hours, total))
 print()
 for path, r in rows:
     folder = os.path.dirname(path)
@@ -63,11 +74,14 @@ PY
 {
   cat "$RAT_RECEIPT/prompt.md"
   echo
-  echo "## Last 24 hours, from the receipts"
+  echo "## The last $WINDOW_HOURS hours, from the receipts"
   echo
   cat "$SUMMARY"
-} | rat-agent --tag act | tee "$OUT_DIR/$(date +%Y-%m-%d).md"
+  echo
+  echo "You are writing the $WINDOW_NAME digest."
+} | rat-agent --tag act | tee "$OUT_DIR/$(date +%Y-%m-%d)-$WINDOW_NAME.md"
 STATUS=$?
 
-printf '{"digest":"%s"}\n' "state/digest/$(date +%Y-%m-%d).md" > "$RAT_RECEIPT/cursor.json"
+printf '{"digest":"%s","window_hours":%s}\n' \
+  "state/digest/$(date +%Y-%m-%d)-$WINDOW_NAME.md" "$WINDOW_HOURS" > "$RAT_RECEIPT/cursor.json"
 exit "$STATUS"

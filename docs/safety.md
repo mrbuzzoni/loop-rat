@@ -110,6 +110,14 @@ Grading can be turned off (`grading.mode: "off"`), which halves the cost of a
 shift and removes the only check on the parts of the work no script can see. Not
 recommended past week one.
 
+## 8. The record itself
+
+`trace.log` is hash-chained line by line, and each receipt line records the hash
+of the receipt as written. `rat audit` recomputes the chain and reports the first
+line that does not match. Nothing prevents an edit - the guard cannot stop a
+process from writing to a file - but nothing can hide one either, which is the
+property that actually matters when the thing with write access is an agent.
+
 ## What is not protected
 
 Worth being explicit, because a list of brakes reads as more coverage than it is:

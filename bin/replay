@@ -92,4 +92,5 @@ rat_py "$RAT_ROOT/bin/lib/write_receipt.py"
 rat_py "$RAT_ROOT/bin/lib/compare.py" "$SOURCE" "$RAT_RECEIPT" > "$RAT_RECEIPT/compared.md"
 cat "$RAT_RECEIPT/compared.md"
 
-rat_trace replay "$VERDICT" "cost=\$$COST dir=${RAT_RECEIPT#"$RAT_ROOT"/}"
+RECEIPT_HASH="$(rat_hash < "$RAT_RECEIPT/receipt.json")"
+rat_trace receipt "$VERDICT" "cost=\$$COST dir=${RAT_RECEIPT#"$RAT_ROOT"/} rhash=$RECEIPT_HASH replay=1"

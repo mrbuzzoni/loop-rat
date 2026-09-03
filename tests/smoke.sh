@@ -399,6 +399,36 @@ REPLAY="$(find state/receipts -type d -name '*-replay' | sort | tail -n 1)"
 check "the replay names its original"         "grep -q 'replay_of' '$REPLAY/receipt.json'"
 check "the original was not overwritten"      "test -f '$ORIGINAL/receipt.json'"
 
+section "the record can be checked"
+check "the trace lines are chained"       "grep -q ' h=[0-9a-f]' state/trace.log"
+check "audit says the chain holds"        "python3 bin/lib/audit.py state | grep -q 'the chain holds'"
+cp state/trace.log /tmp/rat-trace.ok
+python3 - <<'PY'
+lines = open("state/trace.log").read().splitlines()
+lines[1] = lines[1].replace("status=ok", "status=perfect")
+open("state/trace.log", "w").write("\n".join(lines) + "\n")
+PY
+python3 bin/lib/audit.py state > /tmp/rat-audit.out 2>&1
+RC=$?
+check "an edited trace line is caught"    "test $RC -eq 1 && grep -q 'chain breaks at line 2' /tmp/rat-audit.out"
+cp /tmp/rat-trace.ok state/trace.log
+check "and it passes again once restored" "python3 bin/lib/audit.py state >/dev/null"
+
+EDITED="$(sed -n 's/.*dir=\([^ ]*\).*rhash=.*/\1/p' state/trace.log | tail -n 1)/receipt.json"
+cp "$EDITED" /tmp/rat-receipt.ok
+python3 - "$EDITED" <<'PY'
+import json, sys
+path = sys.argv[1]
+data = json.load(open(path))
+data["verdict"] = "pass"
+json.dump(data, open(path, "w"), indent=2)
+PY
+python3 bin/lib/audit.py state > /tmp/rat-audit2.out 2>&1
+RC=$?
+check "an edited receipt is caught"       "test $RC -eq 1 && grep -q 'no longer match' /tmp/rat-audit2.out"
+cp /tmp/rat-receipt.ok "$EDITED"
+check "audit speaks json"                 "python3 bin/lib/audit.py state --json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d[\"chain_ok\"]'"
+
 section "the front door"
 check "rat list prints the schedule"      "bin/rat list | grep -q pr-hunter"
 check "rat status prints today's spend"   "bin/rat status | grep -q today"

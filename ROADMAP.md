@@ -9,27 +9,27 @@ a dry run does not get written. Anything that removes a brake is not a feature.
 Shipped work lives in [CHANGELOG.md](CHANGELOG.md); this file is only the part
 that has not happened yet.
 
-## Standing today - v0.5.0
+## Standing today - v0.6.0
 
 - the contract: rules committed, personal overrides gitignored
 - the guard, the caps, `kill.sh`: denylist, blast radius, spend ledger, halt file
 - autonomy levels the guard enforces, not a comment in a plan
 - isolation: a shift can run in a worktree and arrive as a patch
+- a hash-chained trace, so the record says whether it has been edited
 - receipts and grading: one folder per shift, graded by a second agent
-- five loops, 99 checks, no services
+- five loops, 105 checks, no services
 
-## 0.4 - read the night faster
+## 0.4 - read the night faster - shipped
 
-The receipts are already right. Reading them is still slower than it should be.
-Two of the four have landed; the digest rollup and `rat show --diff` are what
-0.4 still owes.
+The receipts were already right; reading them was the slow part. All four
+landed: `rat watch`, `rat replay`, the weekly digest, and `rat show --diff`.
 
 | | |
 |---|---|
 | ~~**`rat watch`**~~ | **shipped in 0.4.0** - follow a running shift phase by phase, and read the report the moment it lands |
 | ~~**`rat replay <receipt>`**~~ | **shipped in 0.4.1** - the saved brief again, unchanged, with a comparison of the two answers |
-| **weekly digest** | seven nights on one page. The daily digest works; the pattern across a week is what tells you a loop is drifting |
-| **`rat show --diff`** | the patch first, in your pager, and the prose about the patch second |
+| ~~**weekly digest**~~ | **shipped in 0.6.0** - the digest covers the whole week on Mondays |
+| ~~**`rat show --diff`**~~ | **shipped in 0.6.0** - the patch first, the prose about it second |
 
 ## 0.5 - off the laptop
 
@@ -64,13 +64,15 @@ safe to schedule. Loop packs are what is left.
 
 ## 1.0 - trust
 
-The version where someone other than the author can rely on the receipts.
+The version where someone other than the author can rely on the receipts. Two of
+the three landed early, because the record had to be checkable before anything
+else in this list was worth building. What remains is policy per path.
 
 | | |
 |---|---|
-| **hash-chained trace** | each line carries the hash of the last, so a receipt cannot be quietly rewritten. Including by an agent |
+| ~~**hash-chained trace**~~ | **shipped in 0.6.0** - the chain is checked by `rat audit`, receipts included |
 | **autonomy per directory** | per-loop levels landed in 0.4.0; this is the same idea per path, so one loop can be trusted in `docs/` and nowhere else |
-| **`rat audit`** | a week of nights on one page, written for someone who was not there and has to decide whether to keep it running |
+| ~~**`rat audit`**~~ | **shipped in 0.6.0** - the integrity check and the week, in one page |
 
 ## Never
 

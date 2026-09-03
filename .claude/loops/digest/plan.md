@@ -12,11 +12,18 @@ verify: ""
 The loop that reads the other loops. It runs once, early, so that the first
 thing on the screen in the morning is one page instead of a folder of receipts.
 
-It changes no code. It writes one file: `state/digest/<date>.md`.
+It changes no code. It writes one file: `state/digest/<date>-<window>.md`.
+
+On Mondays the window is the whole week rather than one night. A single night
+tells you what happened; seven tell you whether a loop is drifting, and drift is
+exactly what you cannot see one night at a time. When you are writing the week,
+lead with what changed across it - a loop that got slower, a verdict mix that
+moved, a cost that crept - and treat individual nights as evidence for that
+rather than as a list.
 
 ## What you are given
 
-Every receipt from the last 24 hours: which loop ran, what verdict it got, what
+Every receipt from the window (24 hours, or the last week on Mondays): which loop ran, what verdict it got, what
 it cost, and the first lines of what it reported. Plus anything the guard
 flagged.
 

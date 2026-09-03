@@ -7,7 +7,7 @@
 #   rat status [--json]      last verdict per loop, today's spend, halt state
 #   rat receipts [n]         the last n receipts, newest first
 #                            filters: --loop NAME --verdict V --since 3d --json
-#   rat show [receipt]       read one receipt in full
+#   rat show [receipt]       read one receipt in full (--diff opens the patch first)
 #   rat trace [n]            tail the trace log
 #   rat watch [loop]         follow a running shift, phase by phase, until it ends
 #   rat replay [receipt]     ask the same brief again and compare the two answers
@@ -15,6 +15,7 @@
 #   rat prune [--apply]      age out old receipts (lists them first)
 #   rat new <name>           scaffold a new loop from the template
 #   rat cron                 print crontab lines for the current schedule
+#   rat audit [--days N]     is the record intact, and what still needs a person
 #   rat doctor               check the setup before you trust it overnight
 #   rat resume               clear the halt file left by kill.sh
 #   rat version              which rat this is
@@ -27,7 +28,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 . "$HERE/lib/common.sh"
 
-RAT_VERSION="0.5.0"
+RAT_VERSION="0.6.0"
 SCHEDULE="$RAT_LOOPS_DIR/schedule.yml"
 SCHED_PY="$RAT_ROOT/bin/lib/schedule.py"
 
@@ -131,7 +132,15 @@ cmd_receipts() {
 }
 
 cmd_show() {
-  local dir="${1:-}"
+  local dir=""
+  local diff_first=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --diff) diff_first=1; shift ;;
+      -*) rat_err "show: unknown flag $1"; return 2 ;;
+      *) dir="$1"; shift ;;
+    esac
+  done
   if [ -z "$dir" ]; then
     local newest
     newest="$(find "$RAT_STATE_DIR/receipts" -name receipt.json 2>/dev/null | sort | tail -n 1)"
@@ -141,7 +150,22 @@ cmd_show() {
     fi
     dir="$(dirname "$newest")"
   fi
+  [ -d "$dir" ] || dir="$RAT_ROOT/$dir"
   [ -d "$dir" ] && [ -f "$dir/receipt.json" ] || { rat_err "no receipt at: $dir"; return 1; }
+
+  if [ "$diff_first" = "1" ]; then
+    if [ -s "$dir/diff.patch" ]; then
+      rat_say "-- what it changed"
+      cat "$dir/diff.patch"
+      echo
+      rat_say "apply it with: bin/rat apply ${dir#"$RAT_ROOT"/}"
+      echo
+    else
+      rat_say "that shift changed nothing - here is what it said instead"
+      echo
+    fi
+  fi
+
   rat_say "== $dir"
   echo; cat "$dir/receipt.json"
   echo; rat_say "-- what it reported"; head -n 60 "$dir/output.md" 2>/dev/null
@@ -379,6 +403,7 @@ case "${1:-}" in
   replay)    shift; "$RAT_ROOT/bin/replay" "$@" ;;
   apply)     shift; cmd_apply "$@" ;;
   cron)      shift; rat_py "$SCHED_PY" cron "$SCHEDULE" "$RAT_ROOT" ;;
+  audit)     shift; rat_py "$RAT_ROOT/bin/lib/audit.py" "$RAT_STATE_DIR" "$@" ;;
   doctor)    shift; cmd_doctor "$@" ;;
   resume)    shift; cmd_resume "$@" ;;
   -v|--version|version) printf 'loop rat %s\n' "$RAT_VERSION" ;;

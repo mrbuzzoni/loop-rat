@@ -430,7 +430,8 @@ with open(path, "w") as fh:
     fh.write("\n")
 PY
 
-rat_trace receipt "$VERDICT" "cost=\$$COST dir=${RAT_RECEIPT#"$RAT_ROOT"/}"
+RECEIPT_HASH="$(rat_hash < "$RAT_RECEIPT/receipt.json")"
+rat_trace receipt "$VERDICT" "cost=\$$COST dir=${RAT_RECEIPT#"$RAT_ROOT"/} rhash=$RECEIPT_HASH"
 
 printf '%s %s  %s  %ss  $%s  %s\n' \
   "$(rat_color 1)$RAT_LOOP$(rat_color 0)" "$RAT_SHIFT_ID" "$VERDICT" \

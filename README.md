@@ -126,7 +126,10 @@ rubrics. An agent grading its own shift always finds it excellent, which is why
 the grader never sees itself as the author.
 
 **receipt** writes `receipt.json`, appends one line per phase to `trace.log`, and
-updates the checkpoint so tomorrow's shift knows where this one stopped.
+updates the checkpoint so tomorrow's shift knows where this one stopped. Each
+trace line carries the hash of the line before it, and the receipt line carries
+the hash of the receipt as written - so the log is not just a record, it is a
+record that says whether it has been edited.
 
 A shift stopped by hand or by `kill.sh` still gets all of that: the receipt is
 marked `interrupted` and says which phase it was cut off in. A night you cannot
@@ -139,12 +142,13 @@ bin/rat list           # what is scheduled, how often, how much it is trusted
 bin/rat status         # last verdict per loop, today's spend, halt state
 bin/rat watch          # follow a running shift, phase by phase, as it happens
 bin/rat receipts 10    # the last ten shifts, newest first
-bin/rat show           # the most recent receipt in full
+bin/rat show           # the most recent receipt in full (--diff for the patch)
 bin/rat trace 40       # the phase log
 bin/rat run <loop>     # one shift now, ignoring the schedule
 bin/rat replay         # ask the same brief again, and compare the two answers
 bin/rat apply          # apply the patch a shift produced, after you read it
 bin/rat prune          # age out old receipts, once you have too many
+bin/rat audit          # is the record intact, and what still needs a person
 bin/rat doctor         # validate the machine and the configuration
 ```
 
@@ -171,7 +175,7 @@ disagree point at a brief that is under-specified.
 |---|---|---|---|
 | `pr-hunter` | every 30m, 09:00-19:00, weekdays | report-only | reads open PRs, says which one to look at first |
 | `test-mender` | every 4h, overnight | assisted, isolated | fixes **one** failing test in a worktree, or explains why it will not |
-| `digest` | 06:45 on weekdays | report-only | turns last night's receipts into one page |
+| `digest` | 06:45 on weekdays | report-only | turns last night's receipts into one page, and the whole week's on Mondays |
 | `docs-drift` | 07:15 on weekdays | report-only | compares the CLI against its own documentation |
 | `cost-watch` | 07:30 on Mondays | report-only | reads what the other loops cost and where they drift |
 
@@ -183,6 +187,31 @@ all.
 They are examples, not the product. The shape is the product: a plan that names a
 stop condition, an `act.sh` that gathers before it asks, a rubric that grades,
 a receipt at the end.
+
+### The record is checkable
+
+```bash
+bin/rat audit --days 7
+```
+
+```
+## the record
+- 412 trace line(s), the chain holds
+- 38 receipt(s) match the hashes recorded when they were written
+```
+
+Edit a line, delete one, or change a receipt after the fact and the chain breaks
+at exactly that point:
+
+```
+- the chain breaks at line 2 of 5 - everything after it was written or edited
+  outside the harness
+```
+
+That matters most for the one reader the system cannot vouch for: an agent with
+write access to the same disk. `rat audit` exits non-zero when something does not
+add up, so a monitoring check can watch it, and it closes with what still needs a
+person.
 
 ### Isolation, and how work reaches you
 

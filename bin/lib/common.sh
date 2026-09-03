@@ -47,13 +47,34 @@ rat_setting() {
   if [ -z "$value" ]; then printf '%s' "$fallback"; else printf '%s' "$value"; fi
 }
 
-# One line per phase, append-only. This file is the thing you read when a shift
-# surprises you.
+# Whatever this machine has. python3 is the floor we already depend on, so the
+# chain works even on a box with neither shasum nor sha256sum.
+rat_hash() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | cut -c1-16
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | cut -c1-16
+  else
+    rat_py -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:16])'
+  fi
+}
+
+# One line per phase, append-only, and each line carries the hash of the line
+# before it. Editing or deleting a line breaks every hash after it, so the log
+# is not just a record - it is a record that says whether it has been edited.
+# `rat audit` is what checks it.
 rat_trace() {
   mkdir -p "$RAT_STATE_DIR"
-  printf '%s loop=%s shift=%s phase=%s status=%s %s\n' \
-    "$(rat_now_iso)" "${RAT_LOOP:-harness}" "${RAT_SHIFT_ID:--}" "$1" "$2" "${3:-}" \
-    >> "$RAT_TRACE"
+  local line
+  line="$(printf '%s loop=%s shift=%s phase=%s status=%s %s' \
+    "$(rat_now_iso)" "${RAT_LOOP:-harness}" "${RAT_SHIFT_ID:--}" "$1" "$2" "${3:-}")"
+  local prev=""
+  if [ -f "$RAT_TRACE" ]; then
+    prev="$(tail -n 1 "$RAT_TRACE" 2>/dev/null | sed -n 's/.* h=\([0-9a-f]*\)$/\1/p')"
+  fi
+  local digest
+  digest="$(printf '%s|%s' "$prev" "$line" | rat_hash)"
+  printf '%s h=%s\n' "$line" "$digest" >> "$RAT_TRACE"
 }
 
 rat_halted() { [ -f "$RAT_HALT" ]; }

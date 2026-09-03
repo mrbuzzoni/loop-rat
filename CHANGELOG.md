@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.6.0 - 2026-09-03
+
+- **The log says whether it has been edited.** Every line of `trace.log` carries
+  the hash of the line before it, and every receipt line carries the hash of the
+  receipt as written. Change a line, delete one, or edit a receipt afterwards
+  and the chain breaks at exactly that point.
+- **`rat audit`** - recomputes both, then summarises the window and lists what
+  still needs a person. It exits non-zero when the record does not add up, so it
+  works as a monitoring check and not only as something you read. A rotated log
+  is not treated as tampering: the first kept line has no predecessor left, and
+  the audit says so.
+- **`rat show --diff`** - the patch first, in full, and the prose about the patch
+  second. The order you actually want when deciding whether to apply something.
+- **The digest covers the week on Mondays.** One night tells you what happened;
+  seven tell you whether a loop is drifting, and drift is what you cannot see one
+  night at a time.
+- Replays are attested like any other shift, so a receipt produced by
+  `rat replay` cannot be edited unnoticed either.
+- 105 checks in the smoke test.
+
+  The reason for all of this is narrow and worth saying plainly: the harness runs
+  an agent that can write to the same disk as its own evidence. A log only that
+  agent can vouch for is not evidence.
+
 ## 0.5.0 - 2026-09-03
 
 - **A shift can run somewhere you are not standing.** `worktree: true` in a plan
