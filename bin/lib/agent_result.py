@@ -8,19 +8,28 @@ file. Exits 1 if the response says it failed, so the shift records an error
 instead of an empty success.
 """
 import json
+import os
 import sys
 
 
 def main(argv):
     raw_path, cost_path, result_field, cost_field = argv[1:5]
+    with open(cost_path, "w", encoding="utf-8") as fh:
+        fh.write("0.0000\n")                    # until proven otherwise
+
+    if not os.path.exists(raw_path) or os.path.getsize(raw_path) == 0:
+        sys.stdout.write("**The shift could not reach the model.**\n\n"
+                         "The agent produced no response at all.\n")
+        sys.stderr.write("agent produced no response\n")
+        return 1
+
     try:
         with open(raw_path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-    except (ValueError, OSError):
+    except ValueError:
+        # Not JSON: an agent that answers in plain text is allowed to.
         with open(raw_path, "r", encoding="utf-8", errors="replace") as fh:
             sys.stdout.write(fh.read())
-        with open(cost_path, "w", encoding="utf-8") as fh:
-            fh.write("0.0000\n")
         return 0
 
     if isinstance(data, list):                  # stream-json transcripts

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.7.1 - 2026-09-03
+
+Found by auditing the harness rather than by adding to it.
+
+- **Concurrent shifts broke the hash chain.** Two loops finishing in the same
+  second each read the last trace line and appended, and the second one's hash
+  pointed at a line that was no longer last. Trace writes are now serialized;
+  four shifts racing each other leave a chain that holds.
+- **An agent with no arguments crashed `rat-agent`** under `set -u` on the bash
+  that ships with macOS. An agent that takes no flags is a normal agent.
+- **An agent that produced nothing** ended in a python traceback instead of a
+  receipt. It is now a failure with a sentence in `output.md`.
+- **In-place shifts touched your index.** Building the patch staged everything
+  and reset, which unstaged whatever you had staged yourself. The patch is now
+  built through a private index, and contains only the files the guard saw the
+  shift change - not work you left on the branch.
+- `cost-watch` counted its own table header as a loop.
+- Mutexes no longer look like shift locks to `kill.sh`, and a mutex left by a
+  dead process is cleared after five seconds instead of slowing every write.
+- 119 checks in the smoke test.
+
 ## 0.7.0 - 2026-09-03
 
 - **A path can outrank a loop.** `guard.path_policy` maps globs to the minimum

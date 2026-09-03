@@ -10,7 +10,7 @@ FACTS="$RAT_RECEIPT/numbers.md"
 COST_WATCH_DAYS="${COST_WATCH_DAYS:-14}" \
   python3 "$RAT_ROOT/.claude/loops/cost-watch/report.py" > "$FACTS" 2>"$RAT_RECEIPT/report.err"
 
-SHIFTS="$(grep -c '^| [a-z]' "$FACTS" 2>/dev/null || echo 0)"
+SHIFTS="$(sed -n 's/^## \([0-9][0-9]*\) shifts.*/\1/p' "$FACTS" | head -n 1)"
 if [ "${SHIFTS:-0}" -lt 1 ]; then
   echo "**What I found** - not enough history to read yet."
   echo

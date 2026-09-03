@@ -86,7 +86,9 @@ fi
 # space in it survive - plain word splitting would tear it in half.
 eval "ARGS=($(read_args))"
 AGENT_RC=0
-printf '%s' "$PROMPT" | "$AGENT_CMD" "${ARGS[@]}" > "$RAW" 2> "$OUT_DIR/agent-$TAG.stderr" || AGENT_RC=$?
+# ${ARGS[@]+"${ARGS[@]}"}: an empty args list is "unbound" to bash 3.2 under
+# set -u, and an agent that takes no flags is a perfectly normal agent.
+printf '%s' "$PROMPT" | "$AGENT_CMD" ${ARGS[@]+"${ARGS[@]}"} > "$RAW" 2> "$OUT_DIR/agent-$TAG.stderr" || AGENT_RC=$?
 if [ "$AGENT_RC" -ne 0 ]; then
   # Do not bail yet: the response body usually explains the failure, and that
   # explanation belongs in the receipt rather than in a log nobody opens.

@@ -308,9 +308,29 @@ else
 fi
 CHANGED="$(rat_json_field "$RAT_RECEIPT/guard.json" checked 0)"
 if [ "${CHANGED:-0}" != "0" ] && git -C "$WORKDIR" rev-parse --git-dir >/dev/null 2>&1; then
-  git -C "$WORKDIR" add -A -- . 2>/dev/null || true
-  git -C "$WORKDIR" diff --cached > "$RAT_RECEIPT/diff.patch" 2>/dev/null || true
-  git -C "$WORKDIR" reset -q 2>/dev/null || true
+  # A private index, so the patch includes new files without staging or
+  # unstaging anything in the index you were actually using.
+  SCRATCH_INDEX="$RAT_RECEIPT/.index"
+  cp "$(git -C "$WORKDIR" rev-parse --git-path index)" "$SCRATCH_INDEX" 2>/dev/null || : > "$SCRATCH_INDEX"
+  # Only what the guard saw this shift change - not work you left on the
+  # branch, and not files that were already dirty when the night began.
+  rat_py - "$RAT_RECEIPT/guard.json" <<'PY' > "$RAT_RECEIPT/.touched"
+import json, sys
+try:
+    for path in json.load(open(sys.argv[1])).get("files", []):
+        print(path)
+except (OSError, ValueError):
+    pass
+PY
+  if [ -s "$RAT_RECEIPT/.touched" ]; then
+    GIT_INDEX_FILE="$SCRATCH_INDEX" git -C "$WORKDIR" reset -q HEAD -- . 2>/dev/null || true
+    while IFS= read -r touched; do
+      GIT_INDEX_FILE="$SCRATCH_INDEX" git -C "$WORKDIR" add -- "$touched" 2>/dev/null || true
+    done < "$RAT_RECEIPT/.touched"
+    GIT_INDEX_FILE="$SCRATCH_INDEX" git -C "$WORKDIR" diff --cached HEAD -- \
+      > "$RAT_RECEIPT/diff.patch" 2>/dev/null || true
+  fi
+  rm -f "$SCRATCH_INDEX" "$RAT_RECEIPT/.touched"
 fi
 
 # ------------------------------------------------------------------- grade --

@@ -433,6 +433,60 @@ check "an installed pack runs"             "test $RC -le 2"
 check "and nothing scheduled it"           "! grep -q todo-harvest .claude/loops/schedule.yml"
 rm -rf .claude/loops/todo-harvest
 
+section "found while auditing"
+# four shifts at once must not break the chain: trace writes are serialized
+rm -f state/trace.log
+( bin/shift digest --dry-run >/dev/null 2>&1 & bin/shift pr-hunter --dry-run >/dev/null 2>&1 &
+  bin/shift docs-drift --dry-run >/dev/null 2>&1 & bin/shift cost-watch --dry-run >/dev/null 2>&1 & wait )
+check "concurrent shifts keep the chain"    "python3 bin/lib/audit.py state | grep -q 'the chain holds'"
+
+# an agent configured with no arguments is a normal agent
+mkdir -p state/scratch
+cat > fake-agent <<'EOF'
+#!/usr/bin/env python3
+import json, sys
+sys.stdin.read()
+print(json.dumps({"result": "a fake answer", "total_cost_usd": 0.0123}))
+EOF
+chmod +x fake-agent
+cp .claude/loops/settings.json /tmp/rat-settings-real.json
+python3 - <<'PY'
+import json
+p = ".claude/loops/settings.json"
+s = json.load(open(p))
+s["agent"] = {"command": "./fake-agent", "args": [], "result_field": "result",
+              "cost_field": "total_cost_usd"}
+json.dump(s, open(p, "w"), indent=2)
+PY
+RAT_RECEIPT="$PWD/state/scratch" RAT_LOOP=argless bin/rat-agent --tag probe > /tmp/rat-argless.out 2>&1 <<< "hi"
+RC=$?
+check "an agent with no args is fine"       "test $RC -eq 0 && grep -q 'a fake answer' /tmp/rat-argless.out"
+check "and its price is recorded"           "grep -q '0.0123' state/scratch/agent-probe.cost"
+cp /tmp/rat-settings-real.json .claude/loops/settings.json
+rm -rf state/scratch fake-agent
+
+# an agent that produces nothing is a failure with a sentence, not a traceback
+mkdir -p state/scratch
+python3 bin/lib/agent_result.py state/scratch/none.json state/scratch/none.cost result total_cost_usd > /tmp/rat-none.out 2>/dev/null
+RC=$?
+check "a missing response fails cleanly"    "test $RC -eq 1 && grep -q 'could not reach' /tmp/rat-none.out"
+rm -rf state/scratch
+
+# an in-place shift must not touch the index you were using, and its patch
+# must contain only what it changed
+printf 'my staged work\n' > app.txt
+git add app.txt
+mkdir -p .claude/loops/_inplace
+printf -- '---\nname: _inplace\nautonomy: assisted\nrubrics: []\ntimeout: 30\n---\nchange\n' > .claude/loops/_inplace/plan.md
+printf '#!/usr/bin/env bash\nprintf "by the loop\\n" > loop-made.txt\necho done\n' > .claude/loops/_inplace/act.sh
+chmod +x .claude/loops/_inplace/act.sh
+bin/shift _inplace --dry-run >/dev/null 2>&1
+INPLACE="$(find state/receipts -type d -name '*_inplace' | sort | tail -n 1)"
+check "staged work stays staged"            "git diff --cached --name-only | grep -q '^app.txt$'"
+check "the patch holds only the loop's file" "grep -q 'loop-made.txt' '$INPLACE/diff.patch' && ! grep -q 'app.txt' '$INPLACE/diff.patch'"
+git reset -q app.txt; git checkout -- app.txt 2>/dev/null; rm -f loop-made.txt
+rm -rf .claude/loops/_inplace
+
 section "the record can be checked"
 check "the trace lines are chained"       "grep -q ' h=[0-9a-f]' state/trace.log"
 check "audit says the chain holds"        "python3 bin/lib/audit.py state | grep -q 'the chain holds'"

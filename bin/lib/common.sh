@@ -65,6 +65,10 @@ rat_hash() {
 # `rat audit` is what checks it.
 rat_trace() {
   mkdir -p "$RAT_STATE_DIR"
+  rat_with_lock trace _rat_trace_write "$@"
+}
+
+_rat_trace_write() {
   local line
   line="$(printf '%s loop=%s shift=%s phase=%s status=%s %s' \
     "$(rat_now_iso)" "${RAT_LOOP:-harness}" "${RAT_SHIFT_ID:--}" "$1" "$2" "${3:-}")"
@@ -151,14 +155,18 @@ rat_unlock() { rm -rf "$RAT_STATE_DIR/locks/$1.lock"; }
 # writes anyway: losing one cost entry is better than losing a whole shift.
 rat_with_lock() {
   local name="$1"; shift
-  local lock="$RAT_STATE_DIR/locks/$name.lock"
+  # Not "<name>.lock": kill.sh treats those as shifts to stop. A mutex is held
+  # for milliseconds and has no pid worth killing.
+  local lock="$RAT_STATE_DIR/locks/mutex-$name"
   local waited=0
   mkdir -p "$RAT_STATE_DIR/locks"
   while ! mkdir "$lock" 2>/dev/null; do
     waited=$((waited + 1))
     if [ "$waited" -gt 50 ]; then
-      rat_warn "gave up waiting for the $name lock"
-      break
+      # Five seconds is far longer than any holder needs. A mutex this old was
+      # left by a process that died holding it.
+      rm -rf "$lock"
+      continue
     fi
     sleep 0.1
   done
