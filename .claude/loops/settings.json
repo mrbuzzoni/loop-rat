@@ -19,6 +19,14 @@
   },
   "guard": {
     "scan_secrets": true,
+    "path_policy": [
+      { "pattern": "bin/**",             "min_level": "autonomous" },
+      { "pattern": ".claude/loops/**",   "min_level": "autonomous" },
+      { "pattern": "tests/**",           "min_level": "autonomous" },
+      { "pattern": "CONTRACT.md",        "min_level": "autonomous" },
+      { "pattern": "docs/**",            "min_level": "assisted" },
+      { "pattern": "README.md",          "min_level": "assisted" }
+    ],
     "denylist": [
       "**/.env",
       "**/.env.*",

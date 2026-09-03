@@ -147,6 +147,7 @@ bin/rat trace 40       # the phase log
 bin/rat run <loop>     # one shift now, ignoring the schedule
 bin/rat replay         # ask the same brief again, and compare the two answers
 bin/rat apply          # apply the patch a shift produced, after you read it
+bin/rat add --list     # loops other people already ran, ready to install
 bin/rat prune          # age out old receipts, once you have too many
 bin/rat audit          # is the record intact, and what still needs a person
 bin/rat doctor         # validate the machine and the configuration
@@ -229,6 +230,24 @@ bin/rat apply                      # put it in your working tree, uncommitted
 Nothing is committed and nothing is pushed, ever. `test-mender` ships this way:
 isolated, one repair attempt, and a patch waiting in the morning.
 
+### A path can outrank a loop
+
+Autonomy says how much a loop may change. `guard.path_policy` says **where**:
+
+```json
+{ "pattern": "bin/**",           "min_level": "autonomous" },
+{ "pattern": ".claude/loops/**", "min_level": "autonomous" },
+{ "pattern": "docs/**",          "min_level": "assisted" }
+```
+
+First matching pattern wins, so narrow rules go above broad ones. In this
+repository that means the harness's own code, its loops, its tests and the
+contract are out of reach of every loop that ships - none of them is
+`autonomous` - while `docs/` is fair game for an assisted one.
+
+This is the rule to reach for when a loop is trustworthy in one corner of a
+repository and nowhere near ready for the rest of it.
+
 ### Autonomy is enforced, not implied
 
 Every plan declares a level, and the guard holds it to it:
@@ -248,7 +267,18 @@ Start every loop at `report-only` and leave it there for a week of receipts you
 actually read. [docs/loop-design.md](docs/loop-design.md) is the rest of that
 argument.
 
-Make your own:
+Install one someone else has already run for a month:
+
+```bash
+bin/rat add --list
+bin/rat add todo-harvest
+```
+
+A pack is a directory with a `plan.md` and an `act.sh`, so `bin/rat add
+../some/other/loop` works too. Nothing is scheduled for you - a loop that starts
+running because you installed it is a loop nobody decided to run.
+
+Or make your own:
 
 ```bash
 bin/rat new release-notes

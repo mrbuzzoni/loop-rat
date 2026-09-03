@@ -14,6 +14,7 @@
 #   rat apply <receipt>      apply the patch a shift produced, after you read it
 #   rat prune [--apply]      age out old receipts (lists them first)
 #   rat new <name>           scaffold a new loop from the template
+#   rat add <pack|path>      install a loop someone else already ran (--list to browse)
 #   rat cron                 print crontab lines for the current schedule
 #   rat audit [--days N]     is the record intact, and what still needs a person
 #   rat doctor               check the setup before you trust it overnight
@@ -28,7 +29,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 . "$HERE/lib/common.sh"
 
-RAT_VERSION="0.6.0"
+RAT_VERSION="0.7.0"
 SCHEDULE="$RAT_LOOPS_DIR/schedule.yml"
 SCHED_PY="$RAT_ROOT/bin/lib/schedule.py"
 
@@ -324,6 +325,69 @@ cmd_prune() {
   rotate_trace "${1:-}"
 }
 
+# A pack is a directory with a plan and an act script. That is the whole
+# distribution mechanism, and it is deliberately not a registry: installing a
+# loop should be as reviewable as copying a folder, because that is what it is.
+cmd_add() {
+  local packs_dir="$RAT_ROOT/packs"
+
+  if [ "${1:-}" = "--list" ] || [ $# -eq 0 ]; then
+    if [ ! -d "$packs_dir" ]; then
+      rat_err "no packs/ directory here - pass a path instead: bin/rat add ../some/loop"
+      return 1
+    fi
+    printf '%-18s %s\n' PACK "WHAT IT DOES"
+    local dir
+    for dir in "$packs_dir"/*/; do
+      [ -f "$dir/plan.md" ] || continue
+      local name summary
+      name="$(basename "$dir")"
+      summary="$(rat_py "$RAT_CONF" body "$dir/plan.md" 2>/dev/null \
+                 | grep -v '^#' | grep -v '^$' | head -n 1 | cut -c1-58)"
+      printf '%-18s %s\n' "$name" "$summary"
+    done
+    echo
+    echo "install one with: bin/rat add <name>"
+    return 0
+  fi
+
+  local source="$1"
+  [ -d "$source" ] || source="$packs_dir/$1"
+  [ -d "$source" ] || { rat_err "no pack or directory called '$1'"; return 1; }
+  [ -f "$source/plan.md" ] || { rat_err "$source has no plan.md, so it is not a loop"; return 1; }
+  [ -f "$source/act.sh" ] || { rat_err "$source has no act.sh, so it is not a loop"; return 1; }
+
+  local name
+  name="$(basename "$source")"
+  local dest="$RAT_LOOPS_DIR/$name"
+  if [ -d "$dest" ]; then
+    rat_err "$name is already installed - remove $dest first if you mean to replace it"
+    return 1
+  fi
+
+  cp -R "$source" "$dest"
+  chmod +x "$dest"/*.sh 2>/dev/null || true
+  rat_say "installed $name from ${source#"$RAT_ROOT"/}"
+
+  local autonomy
+  autonomy="$(rat_py "$RAT_CONF" fm-get "$dest/plan.md" autonomy 2>/dev/null || echo report-only)"
+  echo
+  rat_py "$RAT_ROOT/bin/lib/validate.py" 2>&1 | grep -E "$name|FAIL" || true
+  echo
+  echo "it is not scheduled, and will not run until you say so:"
+  echo
+  echo "  1. read it:      \$EDITOR $dest/plan.md"
+  echo "  2. try it:       bin/shift $name --dry-run"
+  echo "  3. schedule it, by adding to .claude/loops/schedule.yml:"
+  echo
+  echo "       - name: $name"
+  echo "         every: 1d"
+  echo "         days: mon-fri"
+  echo "         enabled: true"
+  echo
+  echo "installed at autonomy '$autonomy'. leave it there for a week."
+}
+
 cmd_new() {
   local name="${1:-}"
   [ -n "$name" ] || { rat_err "usage: loop new <name>"; return 2; }
@@ -398,6 +462,7 @@ case "${1:-}" in
   show)      shift; cmd_show "$@" ;;
   trace)     shift; tail -n "${1:-20}" "$RAT_TRACE" 2>/dev/null || rat_say "no trace yet" ;;
   new)       shift; cmd_new "$@" ;;
+  add)       shift; cmd_add "$@" ;;
   prune)     shift; cmd_prune "$@" ;;
   watch)     shift; cmd_watch "$@" ;;
   replay)    shift; "$RAT_ROOT/bin/replay" "$@" ;;

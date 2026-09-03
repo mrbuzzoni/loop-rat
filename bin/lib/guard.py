@@ -18,7 +18,9 @@ size or mtime moved while the shift was running. Work someone left on the branch
 yesterday is not held against tonight's loop.
 
 The autonomy level comes from the loop's plan and decides how much change is
-allowed at all. A report-only loop that writes a file is blocked even when the
+allowed at all, and `guard.path_policy` decides where. A path can demand a
+higher level than a loop has, which is how a directory stays out of reach of
+every loop you have not deliberately trusted with it. A report-only loop that writes a file is blocked even when the
 file is harmless and the diff is small: the point of the level is that the loop
 said it would not, and then did.
 
@@ -30,6 +32,8 @@ import os
 import re
 import subprocess
 import sys
+
+LEVELS = {"report-only": 0, "assisted": 1, "autonomous": 2}
 
 SECRET_PATTERNS = [
     (r"AKIA[0-9A-Z]{16}", "aws access key id"),
@@ -171,6 +175,27 @@ def main(argv):
                 verdict["violations"].append(
                     {"kind": "denylist", "path": path, "pattern": pattern})
                 break
+
+    # Where a level is not enough. First matching pattern wins, so put the
+    # narrow rules above the broad ones.
+    policy = guard.get("path_policy", [])
+    have = LEVELS.get(autonomy, 0)
+    for path in files:
+        for rule in policy:
+            pattern = rule.get("pattern", "")
+            if not pattern or not (fnmatch.fnmatch(path, pattern)
+                                   or fnmatch.fnmatch("/" + path, pattern)):
+                continue
+            needed = rule.get("min_level", "autonomous")
+            if have < LEVELS.get(needed, 3):
+                verdict["violations"].append({
+                    "kind": "path-policy",
+                    "path": path,
+                    "pattern": pattern,
+                    "needs": needed,
+                    "has": autonomy,
+                })
+            break
 
     if files and not may_change:
         verdict["violations"].append({

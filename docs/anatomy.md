@@ -60,6 +60,11 @@ and it can be checked later without rerunning the shift.
 
 **`.claude/loops/_template/`** - what `bin/rat new` copies.
 
+**`packs/<name>/`** - loops that are not installed. `bin/rat add <name>` copies
+one into `.claude/loops/` and prints the schedule entry to paste; it never
+schedules anything itself. A pack is just a directory with a plan and an act
+script, so a path to any other directory works the same way.
+
 ## The state
 
 Nothing here is source. Delete the whole folder and the next shift rebuilds it;

@@ -39,6 +39,17 @@ Each level's limits live in `settings.json` under `autonomy`, so tightening the
 whole harness is one edit rather than one edit per loop. An unknown level is
 treated as the strictest one: a typo can never widen what a loop may do.
 
+Level answers "how much". `guard.path_policy` answers "where":
+
+```json
+{ "pattern": "src/payments/**", "min_level": "autonomous" },
+{ "pattern": "docs/**",         "min_level": "assisted" }
+```
+
+A path can demand a higher level than any loop you have. That is the point - it
+is how a directory stays out of reach of everything you have not deliberately
+trusted with it, including loops you install later and forget about.
+
 ## Gather, then ask
 
 The single habit that separates a cheap loop from an expensive one:

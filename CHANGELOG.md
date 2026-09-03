@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.0 - 2026-09-03
+
+- **A path can outrank a loop.** `guard.path_policy` maps globs to the minimum
+  autonomy required to touch them, first match wins. In this repository `bin/`,
+  `.claude/loops/`, `tests/` and `CONTRACT.md` now require `autonomous`, which
+  no shipped loop is - so the harness's own code is out of reach of every loop
+  it runs. `docs/` requires `assisted`.
+- **Loop packs.** `bin/rat add --list` shows what is available, `bin/rat add
+  <name>` installs it, validates it, and prints the schedule entry to paste.
+  Nothing is scheduled for you: a loop that starts running because you installed
+  it is a loop nobody decided to run. A pack is a directory with a `plan.md` and
+  an `act.sh`, so `bin/rat add ../some/other/loop` works too - deliberately not
+  a registry.
+- Two packs to start with: `todo-harvest` (which markers are load-bearing and
+  which are decoration) and `flaky-finder` (runs a command several times and
+  reports what disagreed, never calling a single failure flaky).
+- 113 checks in the smoke test.
+
 ## 0.6.0 - 2026-09-03
 
 - **The log says whether it has been edited.** Every line of `trace.log` carries

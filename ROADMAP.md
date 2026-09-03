@@ -9,15 +9,17 @@ a dry run does not get written. Anything that removes a brake is not a feature.
 Shipped work lives in [CHANGELOG.md](CHANGELOG.md); this file is only the part
 that has not happened yet.
 
-## Standing today - v0.6.0
+## Standing today - v0.7.0
 
 - the contract: rules committed, personal overrides gitignored
 - the guard, the caps, `kill.sh`: denylist, blast radius, spend ledger, halt file
 - autonomy levels the guard enforces, not a comment in a plan
 - isolation: a shift can run in a worktree and arrive as a patch
 - a hash-chained trace, so the record says whether it has been edited
+- policy per path, so the harness's own code is out of reach of its loops
+- installable packs, and two of them
 - receipts and grading: one folder per shift, graded by a second agent
-- five loops, 105 checks, no services
+- five loops, two packs, 113 checks, no services
 
 ## 0.4 - read the night faster - shipped
 
@@ -51,27 +53,32 @@ The grader is the part with an opinion, and opinions need calibration.
 | **two graders, one verdict** | run two and let them disagree. Agreement is cheap; disagreement is the queue for your morning |
 | **`rat calibrate`** | replay old receipts against a changed rubric and see which past verdicts flip. Edit rubrics with evidence, not with vibes |
 
-## 0.7 - the work itself
+## 0.7 - the work itself - shipped
 
-Two of the three arrived early, because `test-mender` needed them before it was
-safe to schedule. Loop packs are what is left.
+All three landed: a worktree per shift, one bounded repair, and installable
+packs.
 
 | | |
 |---|---|
 | ~~**worktree per shift**~~ | **shipped in 0.5.0** - `worktree: true`, and `rat apply` to bring the patch in |
 | ~~**bounded repair**~~ | **shipped in 0.5.0** - `repair: 1`, capped at two whatever a plan asks for |
-| **loop packs** | install a loop someone else already ran for a month, with its rubric and stop conditions attached |
+| ~~**loop packs**~~ | **shipped in 0.7.0** - `rat add`, and two packs to start with |
 
 ## 1.0 - trust
 
-The version where someone other than the author can rely on the receipts. Two of
-the three landed early, because the record had to be checkable before anything
-else in this list was worth building. What remains is policy per path.
+Everything on this list has landed: the hash-chained trace, `rat audit`, and
+policy per path.
+
+**1.0 is not a feature list any more. It is a waiting period.** The rule this
+project applies to its own loops applies to itself: nothing becomes a default
+until a week of receipts says it should. The version number moves when the
+harness has run unattended, on a real repository, for long enough that the
+receipts are boring - and not on the day the last checkbox was ticked.
 
 | | |
 |---|---|
 | ~~**hash-chained trace**~~ | **shipped in 0.6.0** - the chain is checked by `rat audit`, receipts included |
-| **autonomy per directory** | per-loop levels landed in 0.4.0; this is the same idea per path, so one loop can be trusted in `docs/` and nowhere else |
+| ~~**autonomy per directory**~~ | **shipped in 0.7.0** - `guard.path_policy`, first match wins |
 | ~~**`rat audit`**~~ | **shipped in 0.6.0** - the integrity check and the week, in one page |
 
 ## Never

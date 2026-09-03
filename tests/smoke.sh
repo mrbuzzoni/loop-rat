@@ -17,7 +17,7 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LAB="$(mktemp -d)"
 trap 'rm -rf "$LAB"' EXIT
 
-cp -R "$SRC/bin" "$SRC/.claude" "$SRC/CONTRACT.md" "$SRC/kill.sh" "$LAB/"
+cp -R "$SRC/bin" "$SRC/.claude" "$SRC/packs" "$SRC/CONTRACT.md" "$SRC/kill.sh" "$LAB/"
 mkdir -p "$LAB/tests"
 cp "$SRC/tests/at_rule.py" "$LAB/tests/"
 mkdir -p "$LAB/state"
@@ -398,6 +398,40 @@ check "it compares the two answers"           "grep -q 'similarity' /tmp/rat-rep
 REPLAY="$(find state/receipts -type d -name '*-replay' | sort | tail -n 1)"
 check "the replay names its original"         "grep -q 'replay_of' '$REPLAY/receipt.json'"
 check "the original was not overwritten"      "test -f '$ORIGINAL/receipt.json'"
+
+section "policy per path"
+mkdir -p .claude/loops/_docs_writer .claude/loops/_brain_surgeon docs
+printf 'a doc\n' > docs/page.md
+git add -A >/dev/null 2>&1
+git -c user.email=smoke@test -c user.name=smoke commit -qm "a doc" >/dev/null 2>&1
+printf -- '---\nname: _docs_writer\nautonomy: assisted\nrubrics: []\ntimeout: 30\n---\nwrite\n' > .claude/loops/_docs_writer/plan.md
+printf '#!/usr/bin/env bash\nprintf "edited\\n" > docs/page.md\necho done\n' > .claude/loops/_docs_writer/act.sh
+printf -- '---\nname: _brain_surgeon\nautonomy: assisted\nrubrics: []\ntimeout: 30\n---\nwrite\n' > .claude/loops/_brain_surgeon/plan.md
+printf '#!/usr/bin/env bash\nprintf "# hijacked\\n" >> bin/rat\necho done\n' > .claude/loops/_brain_surgeon/act.sh
+chmod +x .claude/loops/_docs_writer/act.sh .claude/loops/_brain_surgeon/act.sh
+
+bin/shift _docs_writer --dry-run >/dev/null 2>&1
+RC=$?
+check "docs are within an assisted loop"   "test $RC -le 2"
+git checkout -- docs/page.md 2>/dev/null
+
+bin/shift _brain_surgeon --dry-run >/dev/null 2>&1
+RC=$?
+SURGERY="$(find state/receipts -type d -name '*_brain_surgeon' | sort | tail -n 1)"
+check "the harness itself is out of reach"  "test $RC -eq 3"
+check "and the rule that stopped it is named" "grep -q 'path-policy' '$SURGERY/guard.json'"
+git checkout -- bin/rat 2>/dev/null
+rm -rf .claude/loops/_docs_writer .claude/loops/_brain_surgeon
+
+section "packs"
+check "packs can be listed"                "bin/rat add --list | grep -q todo-harvest"
+check "a pack installs"                    "bin/rat add todo-harvest >/dev/null && test -x .claude/loops/todo-harvest/act.sh"
+check "installing twice is refused"        "! bin/rat add todo-harvest >/dev/null 2>&1"
+bin/shift todo-harvest --dry-run >/dev/null 2>&1
+RC=$?
+check "an installed pack runs"             "test $RC -le 2"
+check "and nothing scheduled it"           "! grep -q todo-harvest .claude/loops/schedule.yml"
+rm -rf .claude/loops/todo-harvest
 
 section "the record can be checked"
 check "the trace lines are chained"       "grep -q ' h=[0-9a-f]' state/trace.log"

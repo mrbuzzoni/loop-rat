@@ -85,6 +85,17 @@ def check_settings():
     elif levels:
         ok("autonomy: %d level(s) defined" % len(levels))
 
+    policy = settings.get("guard", {}).get("path_policy", [])
+    for rule in policy:
+        if not rule.get("pattern"):
+            bad("guard.path_policy has a rule with no pattern")
+        level = rule.get("min_level")
+        if level not in KNOWN_LEVELS:
+            bad("guard.path_policy: %r is not a level (use %s)"
+                % (level, ", ".join(KNOWN_LEVELS)))
+    if policy:
+        ok("guard.path_policy: %d rule(s), narrowest first" % len(policy))
+
     if not settings.get("guard", {}).get("denylist"):
         warn("guard.denylist is empty - nothing is off limits by path")
     else:
