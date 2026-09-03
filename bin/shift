@@ -58,6 +58,12 @@ AUTONOMY="$(rat_py "$RAT_CONF" fm-get "$PLAN" autonomy 2>/dev/null || true)"
 [ -n "$AUTONOMY" ] || AUTONOMY="report-only"
 export RAT_AUTONOMY="$AUTONOMY"
 VERIFY_CMD="$(rat_py "$RAT_CONF" fm-get "$PLAN" verify 2>/dev/null || true)"
+USE_WORKTREE="$(rat_py "$RAT_CONF" fm-get "$PLAN" worktree 2>/dev/null || true)"
+REPAIR_LIMIT="$(rat_py "$RAT_CONF" fm-get "$PLAN" repair 2>/dev/null || true)"
+[ -n "$REPAIR_LIMIT" ] || REPAIR_LIMIT=0
+# Two is the ceiling whatever a plan asks for. A third attempt at the same
+# failure is not persistence, it is a loop that has stopped learning.
+[ "$REPAIR_LIMIT" -gt 2 ] 2>/dev/null && REPAIR_LIMIT=2
 
 SPENT_TODAY="$(rat_budget_today)"
 if rat_py -c "import sys; sys.exit(0 if float(sys.argv[1]) >= float(sys.argv[2]) else 1)" "$SPENT_TODAY" "$DAY_CAP"; then
@@ -177,16 +183,44 @@ if [ "$PROMPT_ONLY" = "1" ]; then
 fi
 
 # --------------------------------------------------------------------- act --
+# Where the shift works. Normally the repository itself; with `worktree: true`
+# a throwaway checkout, so a night that goes wrong leaves your tree untouched and
+# arrives in the morning as a patch instead of as a surprise.
+WORKDIR="$RAT_ROOT"
+WORKTREE_PATH=""
+if [ "$USE_WORKTREE" = "1" ] || [ "$USE_WORKTREE" = "true" ]; then
+  if git -C "$RAT_ROOT" rev-parse HEAD >/dev/null 2>&1; then
+    WORKTREE_PATH="$RAT_STATE_DIR/worktrees/$RAT_LOOP-$RAT_SHIFT_ID"
+    mkdir -p "$(dirname "$WORKTREE_PATH")"
+    # No --quiet: it is newer than the git that ships with some macOS setups,
+    # and a harness that only runs on a fresh toolchain is not a harness.
+    if git -C "$RAT_ROOT" worktree add --detach "$WORKTREE_PATH" HEAD \
+         >>"$RAT_RECEIPT/stderr.log" 2>&1; then
+      WORKDIR="$WORKTREE_PATH"
+      rat_trace worktree ok "at=${WORKTREE_PATH#"$RAT_ROOT"/}"
+    else
+      WORKTREE_PATH=""
+      rat_warn "could not create a worktree - running in the repository instead"
+      rat_trace worktree failed "falling back to the repository"
+    fi
+  else
+    rat_warn "no commit to branch from - running in the repository instead"
+    rat_trace worktree skipped "no HEAD"
+  fi
+fi
+export RAT_WORKDIR="$WORKDIR"
+
 export RAT_PLAN="$PLAN"
 export RAT_TIMEOUT="$TIMEOUT"
 export RAT_MAX_USD="$MAX_USD"
 export PATH="$RAT_ROOT/bin:$PATH"
 
-rat_py "$RAT_ROOT/bin/lib/guard.py" --snapshot "$RAT_RECEIPT/tree-before.txt" || true
+RAT_WORKDIR="$WORKDIR" rat_py "$RAT_ROOT/bin/lib/guard.py" --snapshot "$RAT_RECEIPT/tree-before.txt" || true
 
 PHASE="act"
 ACT_START="$(rat_epoch)"
-rat_run_timeout "$TIMEOUT" "$ACT" > "$RAT_RECEIPT/output.md" 2> "$RAT_RECEIPT/stderr.log"
+( cd "$WORKDIR" && rat_run_timeout "$TIMEOUT" "$ACT" ) \
+  > "$RAT_RECEIPT/output.md" 2>> "$RAT_RECEIPT/stderr.log"
 ACT_RC=$?
 ACT_SECONDS=$(( $(rat_epoch) - ACT_START ))
 
@@ -204,31 +238,97 @@ fi
 # ------------------------------------------------------------------ verify --
 PHASE="verify"
 VERIFY_STATUS="skipped"
+ATTEMPTS=1
+
+run_verify() {
+  ( cd "$WORKDIR" && rat_run_timeout "$TIMEOUT" bash -c "$VERIFY_CMD" ) \
+    > "$RAT_RECEIPT/verify-$1.log" 2>&1
+}
+
 if [ -n "$VERIFY_CMD" ] && [ "$ACT_STATUS" = "ok" ]; then
-  if ( cd "$RAT_ROOT" && rat_run_timeout "$TIMEOUT" bash -c "$VERIFY_CMD" ) \
-       > "$RAT_RECEIPT/verify.log" 2>&1; then
+  if run_verify "$ATTEMPTS"; then
     VERIFY_STATUS="pass"
   else
     VERIFY_STATUS="fail"
   fi
-  rat_trace verify "$VERIFY_STATUS" "cmd=$(printf '%s' "$VERIFY_CMD" | cut -c1-60)"
+  rat_trace verify "$VERIFY_STATUS" "attempt=$ATTEMPTS cmd=$(printf '%s' "$VERIFY_CMD" | cut -c1-40)"
+
+  # One repair, then stop. The loop gets to see exactly what failed and what it
+  # already changed - and if the second answer fails the same way, that is a
+  # finding for a person, not a reason to try a third time.
+  while [ "$VERIFY_STATUS" = "fail" ] && [ "$ATTEMPTS" -le "$REPAIR_LIMIT" ]; do
+    PHASE="repair"
+    ATTEMPTS=$((ATTEMPTS + 1))
+    {
+      echo "# Repair attempt $ATTEMPTS of $((REPAIR_LIMIT + 1))"
+      echo
+      echo "Your change did not pass the check. You are being given one more"
+      echo "attempt, and only one. If the same failure survives it, stop and"
+      echo "describe what you now know instead of trying something else."
+      echo
+      cat "$RAT_RECEIPT/prompt.md"
+      echo
+      echo "## What you reported the first time"
+      echo
+      head -c 8000 "$RAT_RECEIPT/output.md"
+      echo
+      echo "## What you have changed so far"
+      echo
+      echo '```diff'
+      ( cd "$WORKDIR" && git diff 2>/dev/null | head -c 12000 )
+      echo '```'
+      echo
+      echo "## What the check said"
+      echo
+      echo '```'
+      tail -c 8000 "$RAT_RECEIPT/verify-$((ATTEMPTS - 1)).log"
+      echo '```'
+      echo
+      echo "Command: \`$VERIFY_CMD\`. Fix the cause, then say what you changed."
+    } | ( cd "$WORKDIR" && "$RAT_ROOT/bin/rat-agent" --tag "repair-$ATTEMPTS" ) \
+      >> "$RAT_RECEIPT/output.md" 2>>"$RAT_RECEIPT/stderr.log"
+
+    if run_verify "$ATTEMPTS"; then
+      VERIFY_STATUS="pass"
+    else
+      VERIFY_STATUS="fail"
+    fi
+    rat_trace repair "$VERIFY_STATUS" "attempt=$ATTEMPTS of $((REPAIR_LIMIT + 1))"
+  done
 fi
 
 # ------------------------------------------------------------------- guard --
 PHASE="guard"
 GUARD_STATUS="ok"
-if rat_py "$RAT_ROOT/bin/lib/guard.py" "$RAT_SETTINGS" "$RAT_RECEIPT/tree-before.txt" "$AUTONOMY" > "$RAT_RECEIPT/guard.json" 2>>"$RAT_RECEIPT/stderr.log"; then
+if RAT_WORKDIR="$WORKDIR" rat_py "$RAT_ROOT/bin/lib/guard.py" "$RAT_SETTINGS" "$RAT_RECEIPT/tree-before.txt" "$AUTONOMY" > "$RAT_RECEIPT/guard.json" 2>>"$RAT_RECEIPT/stderr.log"; then
   rat_trace guard ok ""
 else
   GUARD_STATUS="blocked"
   rat_trace guard blocked "autonomy=$AUTONOMY see guard.json"
 fi
 CHANGED="$(rat_json_field "$RAT_RECEIPT/guard.json" checked 0)"
-if [ "${CHANGED:-0}" != "0" ] && git -C "$RAT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-  git -C "$RAT_ROOT" diff > "$RAT_RECEIPT/diff.patch" 2>/dev/null || true
+if [ "${CHANGED:-0}" != "0" ] && git -C "$WORKDIR" rev-parse --git-dir >/dev/null 2>&1; then
+  git -C "$WORKDIR" add -A -- . 2>/dev/null || true
+  git -C "$WORKDIR" diff --cached > "$RAT_RECEIPT/diff.patch" 2>/dev/null || true
+  git -C "$WORKDIR" reset -q 2>/dev/null || true
 fi
 
 # ------------------------------------------------------------------- grade --
+if [ -n "$WORKTREE_PATH" ]; then
+  if [ "${RAT_KEEP_WORKTREE:-0}" = "1" ]; then
+    rat_trace worktree kept "at=${WORKTREE_PATH#"$RAT_ROOT"/}"
+  else
+    # `worktree remove` arrived in git 2.17; older versions still understand a
+    # deleted directory plus a prune, so do that when the subcommand is missing.
+    if ! git -C "$RAT_ROOT" worktree remove --force "$WORKTREE_PATH" \
+           >>"$RAT_RECEIPT/stderr.log" 2>&1; then
+      rm -rf "$WORKTREE_PATH"
+      git -C "$RAT_ROOT" worktree prune >>"$RAT_RECEIPT/stderr.log" 2>&1 || true
+    fi
+    rat_trace worktree removed "the patch is in the receipt"
+  fi
+fi
+
 PHASE="grade"
 GRADE_MODE="$(rat_setting grading.mode auto)"
 if [ "$GUARD_STATUS" = "blocked" ]; then
@@ -297,6 +397,7 @@ RAT_VERIFY_STATUS="$VERIFY_STATUS" RAT_VERIFY_CMD="$VERIFY_CMD" \
 RAT_GUARD_STATUS="$GUARD_STATUS" RAT_CHANGED="${CHANGED:-0}" \
 RAT_AUTONOMY="$AUTONOMY" \
 RAT_VERDICT="$VERDICT" RAT_COST="$COST" \
+RAT_ATTEMPTS="$ATTEMPTS" RAT_WORKTREE="$([ -n "$WORKTREE_PATH" ] && echo 1 || echo 0)" \
 RAT_STARTED="$STARTED_ISO" RAT_ENDED="$(rat_now_iso)" \
 RAT_DURATION="$(( ENDED_EPOCH - STARTED_EPOCH ))" \
 rat_py "$RAT_ROOT/bin/lib/write_receipt.py"

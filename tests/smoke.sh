@@ -23,6 +23,8 @@ cp "$SRC/tests/at_rule.py" "$LAB/tests/"
 mkdir -p "$LAB/state"
 cd "$LAB"
 git init -q . 2>/dev/null
+printf 'state/\n' > .gitignore
+printf 'original\n' > app.txt
 git -C "$LAB" add -A >/dev/null 2>&1
 git -C "$LAB" -c user.email=smoke@test -c user.name=smoke commit -qm baseline >/dev/null 2>&1
 
@@ -308,6 +310,50 @@ printf '{"verdict":"blocked","loop":"digest"}\n' > state/receipts/2026-01-04/040
 touch -t "$(date -v-40d +%Y%m%d%H%M 2>/dev/null || date -d '40 days ago' +%Y%m%d%H%M)" state/receipts/2026-01-04/040404-digest
 check "a 40-day failure is kept longer"    "bin/rat prune | grep -q 'would remove 1'"
 rm -rf state/receipts/2026-01-0*
+
+section "isolation"
+mkdir -p .claude/loops/_isolated
+printf -- '---\nname: _isolated\nautonomy: assisted\nworktree: true\nrubrics: []\ntimeout: 60\n---\nchange\n' > .claude/loops/_isolated/plan.md
+printf '#!/usr/bin/env bash\nprintf "changed overnight\\n" > app.txt\necho "changed app.txt"\n' > .claude/loops/_isolated/act.sh
+chmod +x .claude/loops/_isolated/act.sh
+bin/shift _isolated --dry-run >/dev/null 2>&1
+RC=$?
+ISO="$(find state/receipts -type d -name '*_isolated' | sort | tail -n 1)"
+check "a worktree shift finishes"           "test $RC -le 2"
+check "the repository is left alone"        "grep -q '^original$' app.txt"
+check "the change arrives as a patch"       "grep -q 'changed overnight' '$ISO/diff.patch'"
+check "the receipt says it was isolated"    "grep -q '\"worktree\": true' '$ISO/receipt.json'"
+check "no worktree is left behind"          "test -z \"\$(ls state/worktrees 2>/dev/null)\""
+
+check "rat apply --check reads the patch"   "bin/rat apply --check '$ISO' | grep -q 'applies cleanly'"
+bin/rat apply "$ISO" >/dev/null 2>&1
+check "rat apply puts it in the tree"       "grep -q 'changed overnight' app.txt"
+git checkout -- app.txt 2>/dev/null
+rm -rf .claude/loops/_isolated
+
+section "bounded repair"
+printf '#!/bin/sh\nexit 1\n' > check.sh
+chmod +x check.sh
+git add -A >/dev/null 2>&1
+git -c user.email=smoke@test -c user.name=smoke commit -qm "a check that fails" >/dev/null 2>&1
+mkdir -p .claude/loops/_stubborn
+printf -- '---\nname: _stubborn\nautonomy: assisted\nworktree: true\nrepair: 1\nrubrics: []\ntimeout: 60\nverify: "./check.sh"\n---\nfix it\n' > .claude/loops/_stubborn/plan.md
+printf '#!/usr/bin/env bash\necho "tried something"\n' > .claude/loops/_stubborn/act.sh
+chmod +x .claude/loops/_stubborn/act.sh
+bin/shift _stubborn --dry-run >/dev/null 2>&1
+RC=$?
+STUB="$(find state/receipts -type d -name '*_stubborn' | sort | tail -n 1)"
+check "a failing check fails the shift"     "test $RC -eq 4"
+check "it tried exactly twice"              "grep -q '\"attempts\": 2' '$STUB/receipt.json'"
+check "the repair is in the trace"          "grep -q 'phase=repair' state/trace.log"
+check "both verify runs were kept"          "test -f '$STUB/verify-1.log' && test -f '$STUB/verify-2.log'"
+
+sed 's/repair: 1/repair: 5/' .claude/loops/_stubborn/plan.md > /tmp/rat-plan-5.md
+cp /tmp/rat-plan-5.md .claude/loops/_stubborn/plan.md
+bin/shift _stubborn --dry-run >/dev/null 2>&1
+STUB="$(find state/receipts -type d -name '*_stubborn' | sort | tail -n 1)"
+check "a plan cannot ask for a third try"   "grep -q '\"attempts\": 3' '$STUB/receipt.json'"
+rm -rf .claude/loops/_stubborn check.sh
 
 section "being interrupted"
 mkdir -p .claude/loops/_slowpoke

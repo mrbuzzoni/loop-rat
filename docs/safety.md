@@ -86,7 +86,18 @@ A blocked shift exits 3 and is marked `blocked` in the receipt. Nothing is
 reverted automatically - the harness stops, it does not tidy up after itself, and
 what to do with a blocked diff is a decision for a person.
 
-## 6. The grader
+## 6. The worktree
+
+A loop with `worktree: true` never touches the tree you work in. It runs in a
+detached checkout, the checkout is removed when the shift ends, and the only
+thing that survives is a patch in the receipt. Nothing reaches your files until
+you run `rat apply`, which applies it without committing and tells you how to
+undo it.
+
+This is the cheapest brake in the system, because it turns "revert a bad night"
+into "delete a directory".
+
+## 7. The grader
 
 The last gate, and the only one with an opinion. A second agent, fresh context,
 rubrics in front of it, and no knowledge that it is grading its own model. It

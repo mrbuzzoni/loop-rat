@@ -99,13 +99,20 @@ cleared rather than obeyed. Then it composes the brief: the
 contract, your local overrides, the rubrics this loop is graded against, the
 cursor the last shift left, and the plan.
 
-**act** runs `act.sh` under a hard timeout. Facts are gathered by shell, judgment
-is asked of the model - anything a script can determine should never cost a
-token. stdout becomes `output.md`.
+**act** runs `act.sh` under a hard timeout, in the tree the loop is allowed to
+touch. With `worktree: true` that is a throwaway checkout rather than your
+repository, so a night that goes wrong arrives as a patch instead of as a
+surprise. Facts are gathered by shell, judgment is asked of the model - anything
+a script can determine should never cost a token. stdout becomes `output.md`.
 
 **verify** runs the plan's `verify:` command. This is the deterministic half of
 "did it work". A model reporting that the tests pass is not evidence; the exit
 code is.
+
+If it fails and the plan allows `repair: 1`, the loop gets **one** more attempt,
+with the failure and its own diff in front of it, and then the check runs again.
+There is no third attempt whatever the plan asks for: two failures of the same
+shape are a finding for a person, not a reason to keep going.
 
 **guard** compares the working tree against a fingerprint taken before the shift
 started and blocks on four things: a change a loop's autonomy level does not
@@ -136,6 +143,7 @@ bin/rat show           # the most recent receipt in full
 bin/rat trace 40       # the phase log
 bin/rat run <loop>     # one shift now, ignoring the schedule
 bin/rat replay         # ask the same brief again, and compare the two answers
+bin/rat apply          # apply the patch a shift produced, after you read it
 bin/rat prune          # age out old receipts, once you have too many
 bin/rat doctor         # validate the machine and the configuration
 ```
@@ -162,7 +170,7 @@ disagree point at a brief that is under-specified.
 | loop | cadence | autonomy | what it does |
 |---|---|---|---|
 | `pr-hunter` | every 30m, 09:00-19:00, weekdays | report-only | reads open PRs, says which one to look at first |
-| `test-mender` | every 4h, overnight | assisted | fixes **one** failing test, or explains why it will not |
+| `test-mender` | every 4h, overnight | assisted, isolated | fixes **one** failing test in a worktree, or explains why it will not |
 | `digest` | 06:45 on weekdays | report-only | turns last night's receipts into one page |
 | `docs-drift` | 07:15 on weekdays | report-only | compares the CLI against its own documentation |
 | `cost-watch` | 07:30 on Mondays | report-only | reads what the other loops cost and where they drift |
@@ -175,6 +183,22 @@ all.
 They are examples, not the product. The shape is the product: a plan that names a
 stop condition, an `act.sh` that gathers before it asks, a rubric that grades,
 a receipt at the end.
+
+### Isolation, and how work reaches you
+
+A loop that changes code should not change *your* checkout while you are asleep
+in it. Set `worktree: true` in the plan and the shift runs in a detached
+worktree under `state/worktrees/`, which is removed when the shift ends. What
+survives is the patch, in the receipt:
+
+```bash
+bin/rat show                       # read what it did and why
+bin/rat apply --check              # would the patch still apply?
+bin/rat apply                      # put it in your working tree, uncommitted
+```
+
+Nothing is committed and nothing is pushed, ever. `test-mender` ships this way:
+isolated, one repair attempt, and a patch waiting in the morning.
 
 ### Autonomy is enforced, not implied
 

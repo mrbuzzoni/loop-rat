@@ -90,6 +90,10 @@ decide what is due.
 
 **`state/budget.json`** - spend per day and per loop.
 
+**`state/worktrees/<loop>-<shift>/`** - the throwaway checkout an isolated shift
+works in, removed when it ends. Present only while a shift is running, or after
+one was interrupted before it could clean up - `git worktree prune` tidies those.
+
 **`state/locks/<loop>.lock`** - a directory, because `mkdir` is atomic. Holds the
 pid and the start time. A lock older than the loop's timeout is treated as stale
 and cleared, so a crashed shift cannot block its loop forever.
@@ -104,6 +108,8 @@ and cleared, so a crashed shift cannot block its loop forever.
 
 **`bin/shift`** - one shift, end to end. Everything that must happen in order -
 lock, brief, act, verify, guard, grade, receipt - happens here and nowhere else.
+
+**`bin/replay`** - sends a saved brief again and compares the two answers.
 
 **`bin/rat-agent`** - the only place that talks to a model. One file, so
 switching provider is one edit and every call is logged the same way.

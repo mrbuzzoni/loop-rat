@@ -113,10 +113,13 @@ def harness_paths(repo):
 
 
 def main(argv):
-    repo = os.environ.get("RAT_ROOT", ".")
+    # The tree a shift may change is not always the repository it was launched
+    # from: with `worktree: true` it is a throwaway checkout.
+    repo = os.environ.get("RAT_WORKDIR") or os.environ.get("RAT_ROOT", ".")
 
     if len(argv) > 2 and argv[1] == "--snapshot":
         return snapshot(repo, argv[2])
+
 
     settings_path = argv[1] if len(argv) > 1 else os.path.join(
         repo, ".claude/loops/settings.json")

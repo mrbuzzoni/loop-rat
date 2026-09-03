@@ -59,6 +59,38 @@ The corollary: **a loop with nothing to do should cost nothing.** If the
 gathering step finds no work, print that and exit before the model is called.
 `docs-drift` does exactly this, and most of its nights are free.
 
+## Where the work happens
+
+A loop that may change files should change them somewhere you are not standing:
+
+```yaml
+worktree: true
+```
+
+The shift runs in a detached checkout under `state/worktrees/`, which is removed
+when it ends. The diff survives in the receipt, and reaches your tree only when
+you run `rat apply`. Three things follow from that, all of them good: your
+editor never sees a file move under it, a bad night is deleted rather than
+reverted, and the morning decision is explicit rather than implied.
+
+The cost is that the shift cannot see uncommitted work you have not pushed to
+that checkout. For a loop that fixes tests, that is usually a feature.
+
+## One repair, never two
+
+```yaml
+verify: "npm test --silent"
+repair: 1
+```
+
+If the check fails, the loop gets exactly one more attempt, with the failure
+output and its own diff in front of it. The harness runs the check again
+afterwards, and stops either way.
+
+The ceiling is two repairs no matter what a plan asks for. A third attempt at
+the same failure is not persistence - it is a loop that has stopped learning and
+started guessing, and guessing at 3am is how repositories get damaged.
+
 ## Stop conditions that hold
 
 Write them as facts that become true, not as amounts of effort:

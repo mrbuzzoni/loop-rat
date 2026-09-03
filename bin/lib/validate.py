@@ -184,6 +184,32 @@ def check_plans(settings, scheduled):
         if timeout is not None and int(timeout) <= 0:
             bad("%s: timeout must be above zero" % name)
 
+        repair = front.get("repair")
+        if repair is not None:
+            try:
+                repair = int(repair)
+            except (TypeError, ValueError):
+                bad("%s: repair must be a number of attempts" % name)
+                repair = 0
+            if repair < 0:
+                bad("%s: repair cannot be negative" % name)
+            elif repair > 2:
+                warn("%s: repair %d will be capped at 2 - a third attempt at the "
+                     "same failure is not persistence" % (name, repair))
+            if repair and not str(front.get("verify") or "").strip():
+                bad("%s: repair %d with no verify command - there is nothing to "
+                    "decide whether a repair worked" % (name, repair))
+
+        if front.get("worktree") in (True, "true", 1, "1"):
+            if level == "report-only":
+                warn("%s: a worktree is pointless for a report-only loop, which "
+                     "may not change anything anyway" % name)
+            git_ok = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"],
+                                    capture_output=True, text=True)
+            if git_ok.returncode != 0:
+                warn("%s asks for a worktree, but there is no commit to branch "
+                     "from - it will run in the repository instead" % name)
+
         verify = str(front.get("verify") or "").strip()
         if verify:
             check = subprocess.run(["bash", "-n", "-c", verify],

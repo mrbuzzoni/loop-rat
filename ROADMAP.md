@@ -9,13 +9,14 @@ a dry run does not get written. Anything that removes a brake is not a feature.
 Shipped work lives in [CHANGELOG.md](CHANGELOG.md); this file is only the part
 that has not happened yet.
 
-## Standing today - v0.4.1
+## Standing today - v0.5.0
 
 - the contract: rules committed, personal overrides gitignored
 - the guard, the caps, `kill.sh`: denylist, blast radius, spend ledger, halt file
 - autonomy levels the guard enforces, not a comment in a plan
+- isolation: a shift can run in a worktree and arrive as a patch
 - receipts and grading: one folder per shift, graded by a second agent
-- five loops, 87 checks, no services
+- five loops, 99 checks, no services
 
 ## 0.4 - read the night faster
 
@@ -52,12 +53,13 @@ The grader is the part with an opinion, and opinions need calibration.
 
 ## 0.7 - the work itself
 
-Only after the reading and the grading are solid.
+Two of the three arrived early, because `test-mender` needed them before it was
+safe to schedule. Loop packs are what is left.
 
 | | |
 |---|---|
-| **worktree per shift** | a failed night never dirties the tree you work in |
-| **bounded repair** | act, verify, one repair, stop. Never a third attempt: two identical failures mean the plan is wrong, not the model |
+| ~~**worktree per shift**~~ | **shipped in 0.5.0** - `worktree: true`, and `rat apply` to bring the patch in |
+| ~~**bounded repair**~~ | **shipped in 0.5.0** - `repair: 1`, capped at two whatever a plan asks for |
 | **loop packs** | install a loop someone else already ran for a month, with its rubric and stop conditions attached |
 
 ## 1.0 - trust

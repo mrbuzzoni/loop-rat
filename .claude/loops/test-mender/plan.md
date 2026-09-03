@@ -1,6 +1,8 @@
 ---
 name: test-mender
 autonomy: assisted
+worktree: true
+repair: 1
 rubrics: [code, safety]
 timeout: 900
 max_usd: 1.00
@@ -10,7 +12,9 @@ verify: "make test || npm test --silent || pytest -q || true"
 # test-mender
 
 The only loop in this repository that is allowed to change code, and it is
-allowed to change very little of it.
+allowed to change very little of it - in a throwaway checkout, so nothing it
+does reaches the tree you work in. What arrives in the morning is a patch and a
+receipt, and `bin/rat apply` is how it gets in, after you have read it.
 
 `act.sh` runs the test suite before you see anything. If the suite is green,
 your shift is one line long: say so and stop. Do not look for work.
@@ -26,6 +30,10 @@ Fix **one** failing test. Not the suite - one test, the first one in the output.
    correct. Not the smallest change that makes the assertion pass.
 3. Run the verify command. It runs again after you finish, and a green run you
    cannot reproduce is a failed shift.
+
+If the check still fails, you get **one** more attempt, with the failure and
+your own diff in front of you. There is no third. Two attempts that fail the
+same way are a finding for a person, not a reason to keep going.
 
 ## The line you do not cross
 

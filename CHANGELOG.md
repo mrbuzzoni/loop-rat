@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5.0 - 2026-09-03
+
+- **A shift can run somewhere you are not standing.** `worktree: true` in a plan
+  puts the whole shift in a detached checkout under `state/worktrees/`, removed
+  when it ends. Your editor never sees a file move under it, a bad night is
+  deleted rather than reverted, and the work arrives in the morning as a patch
+  in the receipt.
+- **`rat apply`** - the other half of that. Read the receipt, check the patch
+  still applies, put it in your working tree. Nothing is committed, nothing is
+  pushed, and the command tells you how to undo it.
+- **One repair, never two.** `repair: 1` gives a loop a second attempt after a
+  failed check, with the failure output and its own diff in front of it, and
+  runs the check again afterwards. The ceiling is two repairs whatever a plan
+  asks for: a third attempt at the same failure is a loop that has stopped
+  learning and started guessing.
+- `test-mender` now ships isolated with one repair, which is what that loop
+  should have been from the start.
+- The validator knows the new keys: a `repair` with no `verify` is an error,
+  a worktree on a report-only loop is pointless, and a repair above two is
+  reported as the cap it will get.
+- Works on the git that ships with older macOS: no `--quiet` on `worktree add`,
+  and a manual prune when `worktree remove` is missing.
+- 99 checks in the smoke test.
+
 ## 0.4.1 - 2026-09-03
 
 - **An interrupted shift still leaves a receipt.** Ctrl-C and `kill.sh` used to

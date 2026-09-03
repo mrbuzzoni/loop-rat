@@ -11,6 +11,7 @@
 #   rat trace [n]            tail the trace log
 #   rat watch [loop]         follow a running shift, phase by phase, until it ends
 #   rat replay [receipt]     ask the same brief again and compare the two answers
+#   rat apply <receipt>      apply the patch a shift produced, after you read it
 #   rat prune [--apply]      age out old receipts (lists them first)
 #   rat new <name>           scaffold a new loop from the template
 #   rat cron                 print crontab lines for the current schedule
@@ -26,7 +27,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 . "$HERE/lib/common.sh"
 
-RAT_VERSION="0.4.1"
+RAT_VERSION="0.5.0"
 SCHEDULE="$RAT_LOOPS_DIR/schedule.yml"
 SCHED_PY="$RAT_ROOT/bin/lib/schedule.py"
 
@@ -244,6 +245,52 @@ rotate_trace() {
   fi
 }
 
+# The last step of the night shift is a human one. A shift that ran in a worktree
+# leaves a patch and nothing else; this is how that patch reaches your tree, once
+# you have read it and decided.
+cmd_apply() {
+  local dir="${1:-}"
+  local check=0
+  [ "${2:-}" = "--check" ] && check=1
+  [ "${1:-}" = "--check" ] && { check=1; dir="${2:-}"; }
+
+  if [ -z "$dir" ]; then
+    dir="$(dirname "$(find "$RAT_STATE_DIR/receipts" -name diff.patch 2>/dev/null | sort | tail -n 1)")"
+    [ -d "$dir" ] || { rat_err "no receipt with a patch in it yet"; return 1; }
+    rat_say "the most recent patch: ${dir#"$RAT_ROOT"/}"
+  fi
+  [ -d "$dir" ] || dir="$RAT_ROOT/$dir"
+  local patch="$dir/diff.patch"
+  [ -s "$patch" ] || { rat_err "no patch in $dir - that shift changed nothing"; return 1; }
+
+  local verdict
+  verdict="$(rat_json_field "$dir/receipt.json" verdict unknown)"
+  local files
+  files="$(rat_json_field "$dir/guard.json" checked 0)"
+  printf 'verdict %s, %s file(s), %s line(s) of diff\n' \
+    "$verdict" "$files" "$(grep -c '^[+-]' "$patch" 2>/dev/null || echo 0)"
+
+  if [ "$verdict" = "blocked" ]; then
+    rat_warn "this shift was blocked by the guard - read guard.json before applying"
+  fi
+
+  if ! git -C "$RAT_ROOT" apply --check "$patch" 2>/dev/null; then
+    rat_err "the patch no longer applies cleanly - the tree has moved since that shift"
+    echo "  read it with: git apply --3way $patch"
+    return 1
+  fi
+
+  if [ "$check" = "1" ]; then
+    rat_say "it applies cleanly. run without --check to actually apply it"
+    return 0
+  fi
+
+  git -C "$RAT_ROOT" apply "$patch"
+  rat_trace apply ok "from=${dir#"$RAT_ROOT"/}"
+  rat_say "applied. nothing was committed - the diff is in your working tree"
+  echo "  undo with: git checkout -- ."
+}
+
 cmd_prune() {
   local keep keep_failed
   keep="$(rat_setting receipts.keep_days 30)"
@@ -330,6 +377,7 @@ case "${1:-}" in
   prune)     shift; cmd_prune "$@" ;;
   watch)     shift; cmd_watch "$@" ;;
   replay)    shift; "$RAT_ROOT/bin/replay" "$@" ;;
+  apply)     shift; cmd_apply "$@" ;;
   cron)      shift; rat_py "$SCHED_PY" cron "$SCHEDULE" "$RAT_ROOT" ;;
   doctor)    shift; cmd_doctor "$@" ;;
   resume)    shift; cmd_resume "$@" ;;
