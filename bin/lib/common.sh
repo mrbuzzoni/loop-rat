@@ -25,7 +25,36 @@ RAT_BUDGET="$RAT_STATE_DIR/budget.json"
 RAT_HALT="$RAT_STATE_DIR/HALT"
 RAT_CONF="$RAT_ROOT/bin/lib/conf.py"
 
-rat_py() { python3 "$@"; }
+# Windows installs Python as `python`; most everywhere else it is `python3`, and
+# on a few machines `python` is still a 2.x. Ask, once, rather than assuming.
+rat_python() {
+  if [ -n "${RAT_PYTHON:-}" ]; then printf '%s' "$RAT_PYTHON"; return 0; fi
+  local candidate
+  for candidate in python3 python py; do
+    if command -v "$candidate" >/dev/null 2>&1 &&
+       "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info[0] == 3 else 1)' 2>/dev/null; then
+      RAT_PYTHON="$candidate"
+      export RAT_PYTHON
+      printf '%s' "$RAT_PYTHON"
+      return 0
+    fi
+  done
+  printf 'python3'
+  return 1
+}
+
+rat_py() { "$(rat_python)" "$@"; }
+
+# msys and cygwin are how a Windows machine usually gets here: Git Bash. WSL
+# reports linux and needs nothing special.
+rat_os() {
+  case "$(uname -s 2>/dev/null || echo unknown)" in
+    Darwin) printf 'macos' ;;
+    Linux) printf 'linux' ;;
+    MINGW*|MSYS*|CYGWIN*) printf 'windows' ;;
+    *) printf 'unknown' ;;
+  esac
+}
 
 rat_now_iso()  { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 rat_today()    { date +"%Y-%m-%d"; }
@@ -93,13 +122,9 @@ rat_run_timeout() {
     local waited=0
     while kill -0 "$pid" 2>/dev/null; do
       if [ "$waited" -ge "$secs" ]; then
-        # Children first: act.sh usually has a model call in flight, and killing
-        # only the script would leave that process running with nobody waiting.
-        pkill -TERM -P "$pid" 2>/dev/null || true
-        kill -TERM "$pid" 2>/dev/null
+        rat_kill_tree "$pid" TERM
         sleep 3
-        pkill -KILL -P "$pid" 2>/dev/null || true
-        kill -KILL "$pid" 2>/dev/null
+        rat_kill_tree "$pid" KILL
         exit 0
       fi
       sleep 1
@@ -113,6 +138,49 @@ rat_run_timeout() {
   kill "$watchdog" 2>/dev/null || true
   wait "$watchdog" 2>/dev/null || true
   return "$rc"
+}
+
+# Kill a process and whatever it started. act.sh usually has a model call in
+# flight, and killing only the script leaves that call running with nobody
+# waiting for it.
+#
+# There is no portable way to do this: pkill knows about parents on unix,
+# taskkill knows about trees on Windows, and Git Bash has neither pkill nor a
+# usable process group. So: try each, in the order most likely to work here.
+rat_kill_tree() {
+  local pid="$1"
+  local signal="${2:-TERM}"
+  [ -n "$pid" ] || return 0
+
+  if command -v pkill >/dev/null 2>&1; then
+    pkill "-$signal" -P "$pid" 2>/dev/null || true
+  elif command -v taskkill >/dev/null 2>&1; then
+    # /T takes the whole tree, which is what the unix branch approximates.
+    if [ "$signal" = "KILL" ]; then
+      taskkill //PID "$pid" //T //F >/dev/null 2>&1 || true
+    else
+      taskkill //PID "$pid" //T >/dev/null 2>&1 || true
+    fi
+  else
+    # Last resort: ask the children who their parent is.
+    local child
+    for child in $(rat_py -c '
+import subprocess, sys
+parent = sys.argv[1]
+try:
+    out = subprocess.run(["ps", "-o", "pid=,ppid="], capture_output=True, text=True).stdout
+except OSError:
+    raise SystemExit(0)
+for line in out.splitlines():
+    parts = line.split()
+    if len(parts) == 2 and parts[1] == parent:
+        print(parts[0])
+' "$pid" 2>/dev/null); do
+      kill "-$signal" "$child" 2>/dev/null || true
+    done
+  fi
+
+  kill "-$signal" "$pid" 2>/dev/null || true
 }
 
 # mkdir is atomic, so it is the lock. A stale lock older than the timeout is

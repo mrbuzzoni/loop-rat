@@ -17,12 +17,12 @@
 #   rat prune [--apply]      age out old receipts (lists them first)
 #   rat new <name>           scaffold a new loop from the template
 #   rat add <pack|path>      install a loop someone else already ran (--list to browse)
-#   rat cron                 print crontab lines for the current schedule
+#   rat cron [--windows]     the one scheduled tick to install (cron, or schtasks)
 #   rat state pull|push      carry the memory between machines, on its own branch
 #   rat calibrate [--days N] re-read old receipts against today's rubrics
 #   rat audit [--days N]     is the record intact, and what still needs a person
 #   rat doctor               check the setup before you trust it overnight
-#   rat resume               clear the halt file left by kill.sh
+#   rat resume [loop]        clear the halt file, or one loop's paused breaker
 #   rat version              which rat this is
 #
 # Every command reads state/ and .claude/loops/ relative to this file, so it
@@ -33,7 +33,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 . "$HERE/lib/common.sh"
 
-RAT_VERSION="0.10.0"
+RAT_VERSION="0.11.0"
 SCHEDULE="$RAT_LOOPS_DIR/schedule.yml"
 SCHED_PY="$RAT_ROOT/bin/lib/schedule.py"
 
@@ -425,8 +425,14 @@ cmd_doctor() {
     fi
   }
 
-  rat_say "the machine"
-  check "python3 on PATH"                 "command -v python3"
+  local os_name
+  os_name="$(rat_os)"
+  rat_say "the machine ($os_name)"
+  if [ "$os_name" = "windows" ]; then
+    printf '  note  Git Bash. WSL works too and needs none of these notes.\n'
+  fi
+  check "python 3 on PATH"                "rat_python >/dev/null && rat_py -c 'import sys; raise SystemExit(0 if sys.version_info[0]==3 else 1)'"
+  printf '  ok    python is `%s`\n' "$(rat_python)"
   check "git on PATH"                     "command -v git"
   check "state/ is writable"              "touch '$RAT_STATE_DIR/.probe' && rm -f '$RAT_STATE_DIR/.probe'"
   check "kill.sh is executable"           "test -x '$RAT_ROOT/kill.sh'"
@@ -442,6 +448,27 @@ cmd_doctor() {
 
   if rat_halted; then
     printf '  warn  state/HALT is present - nothing scheduled will start\n'
+  fi
+
+  # Not fatal anywhere, but worth naming: without one of these a timed-out
+  # shift can leave its model call running.
+  if command -v pkill >/dev/null 2>&1 || command -v taskkill >/dev/null 2>&1; then
+    printf '  ok    a timed-out shift can be stopped with its children\n'
+  else
+    printf '  warn  neither pkill nor taskkill here - a killed shift may leave a\n'
+    printf '        model call running. `ps` is used as a fallback.\n'
+  fi
+
+  if [ "$os_name" = "windows" ]; then
+    if command -v schtasks >/dev/null 2>&1; then
+      printf '  ok    schtasks found - `bin/rat cron --windows` prints what to run\n'
+    else
+      printf '  warn  no schtasks - run shifts by hand, or from WSL cron\n'
+    fi
+  elif command -v crontab >/dev/null 2>&1; then
+    printf '  ok    crontab found - `bin/rat cron` prints the line to install\n'
+  else
+    printf '  warn  no crontab here - nothing will run on a schedule by itself\n'
   fi
 
   echo
@@ -460,6 +487,34 @@ cmd_doctor() {
 }
 
 cmd_resume() {
+  local loop="${1:-}"
+
+  if [ -n "$loop" ]; then
+    # Clearing a breaker is a statement: you read the receipts and you know why
+    # it failed. So it is one loop at a time, by name.
+    rat_py - "$RAT_CHECKPOINT" "$loop" <<'PY'
+import json, os, sys
+path, loop = sys.argv[1], sys.argv[2]
+if not os.path.exists(path):
+    print("no checkpoint yet - nothing to clear")
+    raise SystemExit(0)
+with open(path) as fh:
+    data = json.load(fh)
+entry = data.get("loops", {}).get(loop)
+if entry is None:
+    print("no loop called %r in the checkpoint" % loop)
+    raise SystemExit(1)
+had = entry.get("consecutive_failures", 0)
+entry["consecutive_failures"] = 0
+with open(path, "w") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+print("cleared %d consecutive failure(s) on %s" % (had, loop))
+PY
+    rat_trace resume ok "loop=$loop"
+    return 0
+  fi
+
   [ -f "$RAT_HALT" ] || { rat_say "not halted"; return 0; }
   rm -f "$RAT_HALT"
   rat_trace resume ok "by=${USER:-unknown}"
@@ -481,7 +536,7 @@ case "${1:-}" in
   watch)     shift; cmd_watch "$@" ;;
   replay)    shift; "$RAT_ROOT/bin/replay" "$@" ;;
   apply)     shift; cmd_apply "$@" ;;
-  cron)      shift; rat_py "$SCHED_PY" cron "$SCHEDULE" "$RAT_ROOT" ;;
+  cron)      shift; RAT_OS="$(rat_os)" rat_py "$SCHED_PY" cron "$SCHEDULE" "$RAT_ROOT" "$@" ;;
   state)     shift; "$RAT_ROOT/bin/state" "$@" ;;
   calibrate) shift; "$RAT_ROOT/bin/calibrate" "$@" ;;
   audit)     shift; rat_py "$RAT_ROOT/bin/lib/audit.py" "$RAT_STATE_DIR" "$@" ;;

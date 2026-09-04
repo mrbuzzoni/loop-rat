@@ -30,7 +30,10 @@ echo
 
 PASSED=0
 FAILED=0
-for i in $(seq 1 "$RUNS"); do
+# A while loop rather than `seq`, which Git Bash does not always have.
+i=0
+while [ "$i" -lt "$RUNS" ]; do
+  i=$((i + 1))
   if ( cd "${RAT_WORKDIR:-$RAT_ROOT}" && eval "$CMD" ) > "$RAT_RECEIPT/run-$i.log" 2>&1; then
     echo "- run $i: passed"
     PASSED=$((PASSED + 1))

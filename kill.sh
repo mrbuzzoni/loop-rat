@@ -26,10 +26,9 @@ if [ -d "$RAT_STATE_DIR/locks" ]; then
     pid="$(cat "$lock/pid" 2>/dev/null || true)"
     name="$(basename "$lock" .lock)"
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      pkill -TERM -P "$pid" 2>/dev/null || true
-      kill -TERM "$pid" 2>/dev/null || true
+      rat_kill_tree "$pid" TERM
       sleep 2
-      kill -KILL "$pid" 2>/dev/null || true
+      rat_kill_tree "$pid" KILL
       killed=$((killed + 1))
       printf 'killed %s (pid %s)\n' "$name" "$pid"
     fi

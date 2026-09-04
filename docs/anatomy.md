@@ -39,6 +39,8 @@ retune the whole harness:
 | `agent.model`, `grading.model` | which model a loop uses, and which one reads its work. A plan's own `model:` wins |
 | `guard.ignore_paths` | build output and dependency directories, which nobody reviews |
 | `state.branch` | where `rat state push` leaves the memory between machines |
+| `caps.pause_after_failures` | how many failed nights in a row pause a loop. 0 turns it off |
+| `notify.command`, `notify.on` | a command run when a shift ends with one of those verdicts |
 | `guard.denylist` | globs a shift may never touch |
 | `guard.scan_secrets` | whether the diff is searched for keys and tokens |
 | `grading.mode` | `auto` runs the second agent, `off` skips it |

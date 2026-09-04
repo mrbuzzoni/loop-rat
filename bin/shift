@@ -29,11 +29,30 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$RAT_LOOP" ] || { rat_err "usage: bin/shift <loop-name> [--dry-run]"; exit 2; }
+
+# A loop name becomes a directory name and part of a receipt path. Keep it to
+# something that cannot climb out of either.
+case "$RAT_LOOP" in
+  *[!A-Za-z0-9_-]*|"")
+    rat_err "'$RAT_LOOP' is not a usable loop name - letters, digits, dashes and underscores only"
+    exit 2
+    ;;
+esac
 export RAT_LOOP
 
 LOOP_DIR="$RAT_LOOPS_DIR/$RAT_LOOP"
 PLAN="$LOOP_DIR/plan.md"
 ACT="$LOOP_DIR/act.sh"
+# Without readable settings there is no denylist, no blast radius and no spend
+# cap - every brake in the system reads from this file. A shift that runs anyway
+# is a shift running with the brakes disconnected.
+if ! rat_py -c 'import json,sys; json.load(open(sys.argv[1]))' "$RAT_SETTINGS" 2>/dev/null; then
+  rat_err "settings.json does not parse - refusing to run with no caps and no denylist"
+  rat_err "check it with: bin/rat doctor"
+  rat_trace preflight failed "reason=settings-unreadable"
+  exit 1
+fi
+
 [ -f "$RAT_ROOT/CONTRACT.md" ] || {
   rat_err "no CONTRACT.md at $RAT_ROOT - a shift without rules is not a shift"
   exit 1
@@ -48,10 +67,25 @@ if rat_halted; then
   exit 75
 fi
 
-TIMEOUT="$(rat_py "$RAT_CONF" fm-get "$PLAN" timeout 2>/dev/null || true)"
-[ -n "$TIMEOUT" ] || TIMEOUT="$(rat_setting caps.timeout_seconds 900)"
-MAX_USD="$(rat_py "$RAT_CONF" fm-get "$PLAN" max_usd 2>/dev/null || true)"
-[ -n "$MAX_USD" ] || MAX_USD="$(rat_setting caps.max_usd_per_shift 1.00)"
+# A plan is hand-written, so treat its numbers as claims rather than facts. A
+# typo should cost you a warning, not a bash error at 3am.
+rat_number() {
+  local value="$1"
+  local fallback="$2"
+  local label="$3"
+  case "$value" in
+    ''|*[!0-9.]*)
+      [ -n "$value" ] && rat_warn "$RAT_LOOP: $label is '$value', which is not a number - using $fallback"
+      printf '%s' "$fallback"
+      ;;
+    *) printf '%s' "$value" ;;
+  esac
+}
+
+TIMEOUT="$(rat_number "$(rat_py "$RAT_CONF" fm-get "$PLAN" timeout 2>/dev/null || true)" \
+  "$(rat_setting caps.timeout_seconds 900)" timeout)"
+MAX_USD="$(rat_number "$(rat_py "$RAT_CONF" fm-get "$PLAN" max_usd 2>/dev/null || true)" \
+  "$(rat_setting caps.max_usd_per_shift 1.00)" max_usd)"
 DAY_CAP="$(rat_setting caps.max_usd_per_day 5.00)"
 RUBRICS="$(rat_py "$RAT_CONF" fm-get "$PLAN" rubrics 2>/dev/null | tr -d '[]"' | tr ',' ' ' || true)"
 AUTONOMY="$(rat_py "$RAT_CONF" fm-get "$PLAN" autonomy 2>/dev/null || true)"
@@ -62,8 +96,7 @@ USE_WORKTREE="$(rat_py "$RAT_CONF" fm-get "$PLAN" worktree 2>/dev/null || true)"
 MODEL="$(rat_py "$RAT_CONF" fm-get "$PLAN" model 2>/dev/null || true)"
 [ -n "$MODEL" ] || MODEL="$(rat_setting agent.model '')"
 export RAT_MODEL="$MODEL"
-REPAIR_LIMIT="$(rat_py "$RAT_CONF" fm-get "$PLAN" repair 2>/dev/null || true)"
-[ -n "$REPAIR_LIMIT" ] || REPAIR_LIMIT=0
+REPAIR_LIMIT="$(rat_number "$(rat_py "$RAT_CONF" fm-get "$PLAN" repair 2>/dev/null || true)" 0 repair)"
 # Two is the ceiling whatever a plan asks for. A third attempt at the same
 # failure is not persistence, it is a loop that has stopped learning.
 [ "$REPAIR_LIMIT" -gt 2 ] 2>/dev/null && REPAIR_LIMIT=2
@@ -73,6 +106,20 @@ if rat_py -c "import sys; sys.exit(0 if float(sys.argv[1]) >= float(sys.argv[2])
   rat_warn "daily budget spent ($SPENT_TODAY of $DAY_CAP) - not starting a shift"
   rat_trace preflight skipped "reason=budget spent=$SPENT_TODAY cap=$DAY_CAP"
   exit 75
+fi
+
+# A loop that has failed the same way several nights running has stopped being
+# a loop and become a bill. It pauses itself and says so; you turn it back on
+# once you know why, which is a decision rather than a default.
+BREAKER="$(rat_setting caps.pause_after_failures 3)"
+if [ "${BREAKER:-0}" != "0" ] && [ -f "$RAT_CHECKPOINT" ]; then
+  FAILURES="$(rat_json_field "$RAT_CHECKPOINT" "loops.$RAT_LOOP.consecutive_failures" 0)"
+  if [ "${FAILURES:-0}" -ge "$BREAKER" ]; then
+    rat_warn "$RAT_LOOP has failed $FAILURES times in a row - it is paused"
+    rat_warn "read the last receipt, then: bin/rat resume $RAT_LOOP"
+    rat_trace preflight skipped "reason=breaker failures=$FAILURES limit=$BREAKER"
+    exit 75
+  fi
 fi
 
 CALL_CAP="$(rat_setting caps.max_calls_per_day 0)"
@@ -411,10 +458,14 @@ if os.path.exists(path):
         pass
 data.setdefault("loops", {})
 entry = data["loops"].setdefault(loop, {})
+# A loop that fails the same way night after night is not trying, it is
+# repeating. Counting that here is what lets the next shift refuse to start.
+bad = verdict in ("fail", "blocked")
 entry.update({
     "last_receipt": os.path.relpath(receipt, os.path.dirname(os.path.dirname(path))),
     "last_verdict": verdict,
     "last_started_epoch": int(started),
+    "consecutive_failures": (entry.get("consecutive_failures", 0) + 1) if bad else 0,
 })
 if os.path.exists(cursor_path):          # act.sh may leave a resume cursor
     try:
@@ -429,6 +480,22 @@ PY
 
 RECEIPT_HASH="$(rat_hash < "$RAT_RECEIPT/receipt.json")"
 rat_trace receipt "$VERDICT" "cost=\$$COST dir=${RAT_RECEIPT#"$RAT_ROOT"/} rhash=$RECEIPT_HASH"
+
+# Telling you is the last thing a shift does, and only when it has something
+# worth interrupting you for. A command, not an integration: whatever you put
+# here gets the verdict and the receipt, and can be a desktop banner, a curl to
+# a chat, or a line in a file.
+NOTIFY="$(rat_setting notify.command '')"
+NOTIFY_ON="$(rat_setting notify.on 'needs-review fail blocked interrupted')"
+if [ -n "$NOTIFY" ] && printf '%s' "$NOTIFY_ON" | grep -qw "$VERDICT"; then
+  RAT_VERDICT="$VERDICT" \
+  RAT_NOTIFY_LOOP="$RAT_LOOP" \
+  RAT_NOTIFY_RECEIPT="${RAT_RECEIPT#"$RAT_ROOT"/}" \
+  RAT_NOTIFY_TEXT="$RAT_LOOP: $VERDICT ($(rat_json_field "$RAT_RECEIPT/grade.json" notes '' | cut -c1-140))" \
+    rat_run_timeout 30 bash -c "$NOTIFY" >>"$RAT_RECEIPT/notify.log" 2>&1 \
+    && rat_trace notify sent "verdict=$VERDICT" \
+    || rat_trace notify failed "see notify.log"
+fi
 
 printf '%s %s  %s  %ss  $%s  %s\n' \
   "$(rat_color 1)$RAT_LOOP$(rat_color 0)" "$RAT_SHIFT_ID" "$VERDICT" \

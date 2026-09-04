@@ -10,6 +10,9 @@ state/*
 # Local editor and tool settings, per machine
 .claude/settings.local.json
 
+# Written by `bin/rat cron --windows` for this machine's paths
+bin/loop-rat.cmd
+
 # Local noise
 __pycache__/
 *.pyc

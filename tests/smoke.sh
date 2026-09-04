@@ -587,6 +587,94 @@ check "the patch holds only the loop's file" "grep -q 'loop-made.txt' '$INPLACE/
 git reset -q app.txt; git checkout -- app.txt 2>/dev/null; rm -f loop-made.txt
 rm -rf .claude/loops/_inplace
 
+section "awkward input"
+bin/shift "bad name" --dry-run >/dev/null 2>&1
+RC=$?
+check "a name with a space is refused"     "test $RC -eq 2"
+bin/shift "../escape" --dry-run >/dev/null 2>&1
+RC=$?
+check "a name that climbs out is refused"  "test $RC -eq 2"
+
+mkdir -p .claude/loops/_broken
+printf -- '---\nname: _broken\ntimeout: not-a-number\nrepair: lots\nrubrics: []\n---\nx\n' > .claude/loops/_broken/plan.md
+printf '#!/usr/bin/env bash\necho hi\n' > .claude/loops/_broken/act.sh
+chmod +x .claude/loops/_broken/act.sh
+bin/shift _broken --dry-run > /tmp/rat-broken-plan.out 2>&1
+RC=$?
+check "a plan with a bad number still runs" "test $RC -le 2"
+check "and says which value it ignored"     "grep -q 'not a number' /tmp/rat-broken-plan.out"
+rm -rf .claude/loops/_broken
+
+cp .claude/loops/settings.json /tmp/rat-settings-real7.json
+printf '{"caps": ' > .claude/loops/settings.json
+bin/shift digest --dry-run > /tmp/rat-nosettings.out 2>&1
+RC=$?
+check "no readable settings, no shift"      "test $RC -eq 1"
+check "because that means no brakes"        "grep -q 'no caps and no denylist' /tmp/rat-nosettings.out"
+cp /tmp/rat-settings-real7.json .claude/loops/settings.json
+
+section "wherever this is running"
+check "python 3 is found by some name"     "bash -c '. bin/lib/common.sh; rat_python >/dev/null && rat_py -c \"import sys; raise SystemExit(0 if sys.version_info[0]==3 else 1)\"'"
+check "the platform is named"              "bash -c '. bin/lib/common.sh; rat_os' | grep -qE 'macos|linux|windows|unknown'"
+check "a process tree can be killed"       "bash -c '
+. bin/lib/common.sh
+bash -c \"sleep 25 & sleep 25; wait\" &
+PARENT=\$!
+sleep 1
+rat_kill_tree \"\$PARENT\" KILL
+sleep 1
+! kill -0 \"\$PARENT\" 2>/dev/null'"
+check "cron output exists for unix"        "python3 bin/lib/schedule.py cron .claude/loops/schedule.yml \"\$PWD\" --cron | grep -q 'run-due'"
+check "and for windows"                    "python3 bin/lib/schedule.py cron .claude/loops/schedule.yml \"\$PWD\" --windows | grep -q schtasks"
+check "the windows wrapper avoids quoting" "python3 bin/lib/schedule.py cron .claude/loops/schedule.yml \"\$PWD\" --windows | grep -q 'loop-rat.cmd'"
+check "no bare seq anywhere in the harness" "! grep -rn '\\bseq \\+[0-9]' bin packs .claude/loops 2>/dev/null | grep -v Binary"
+
+section "a loop that keeps failing"
+mkdir -p .claude/loops/_doomed
+printf -- '---\nname: _doomed\nautonomy: report-only\nrubrics: []\ntimeout: 30\nverify: "false"\n---\nfail\n' > .claude/loops/_doomed/plan.md
+printf '#!/usr/bin/env bash\necho trying\n' > .claude/loops/_doomed/act.sh
+chmod +x .claude/loops/_doomed/act.sh
+bin/shift _doomed --dry-run >/dev/null 2>&1
+bin/shift _doomed --dry-run >/dev/null 2>&1
+bin/shift _doomed --dry-run >/dev/null 2>&1
+check "failures are counted"               "test \"\$(python3 bin/lib/conf.py get state/checkpoint.json loops._doomed.consecutive_failures)\" = 3"
+bin/shift _doomed --dry-run >/dev/null 2>&1
+RC=$?
+check "the fourth night is refused"        "test $RC -eq 75"
+check "and the trace says why"             "grep -q 'reason=breaker' state/trace.log"
+bin/rat resume _doomed >/dev/null 2>&1
+check "resume clears one loop"             "test \"\$(python3 bin/lib/conf.py get state/checkpoint.json loops._doomed.consecutive_failures)\" = 0"
+bin/shift _doomed --dry-run >/dev/null 2>&1
+RC=$?
+check "and it runs again after that"       "test $RC -ne 75"
+rm -rf .claude/loops/_doomed
+
+section "telling you about it"
+cp .claude/loops/settings.json /tmp/rat-settings-real6.json
+python3 - <<'PY'
+import json
+p = ".claude/loops/settings.json"
+s = json.load(open(p))
+s["notify"] = {"command": 'printf "%s|%s\n" "$RAT_VERDICT" "$RAT_NOTIFY_LOOP" >> notified.txt',
+               "on": "needs-review fail blocked interrupted"}
+json.dump(s, open(p, "w"), indent=2)
+PY
+rm -f notified.txt
+bin/shift digest --dry-run >/dev/null 2>&1
+check "a shift worth reading notifies"     "grep -q 'needs-review|digest' notified.txt"
+python3 - <<'PY'
+import json
+p = ".claude/loops/settings.json"
+s = json.load(open(p))
+s["notify"]["on"] = "fail"
+json.dump(s, open(p, "w"), indent=2)
+PY
+rm -f notified.txt
+bin/shift digest --dry-run >/dev/null 2>&1
+check "and a quiet one stays quiet"        "test ! -f notified.txt"
+cp /tmp/rat-settings-real6.json .claude/loops/settings.json
+rm -f notified.txt
+
 section "paying for it"
 mkdir -p state/scratch
 cat > echo-agent <<'EOF'
@@ -818,6 +906,9 @@ cp /tmp/rat-receipt.ok "$EDITED"
 check "audit speaks json"                 "python3 bin/lib/audit.py state --json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d[\"chain_ok\"]'"
 
 section "the front door"
+# The suite has spent a day's worth of calls on fake agents by now, and the cap
+# is doing its job. Reset the ledger so the checks below test what they mean to.
+rm -f state/budget.json
 check "rat list prints the schedule"      "bin/rat list | grep -q pr-hunter"
 check "rat status prints today's spend"   "bin/rat status | grep -q today"
 check "rat receipts prints a row"         "bin/rat receipts 50 | grep -q digest"

@@ -12,7 +12,8 @@
     "result_field": "result",
     "cost_field": "total_cost_usd",
     "retries": 2,
-    "retry_delay_seconds": 20
+    "retry_delay_seconds": 20,
+    "model": ""
   },
   "autonomy": {
     "report-only": {
@@ -33,7 +34,8 @@
     "max_usd_per_day": 12.0,
     "timeout_seconds": 1200,
     "max_files_changed": 10,
-    "max_calls_per_day": 40
+    "max_calls_per_day": 12,
+    "pause_after_failures": 3
   },
   "guard": {
     "scan_secrets": true,
@@ -103,7 +105,8 @@
   },
   "grading": {
     "mode": "auto",
-    "graders": 1
+    "graders": 1,
+    "model": "haiku"
   },
   "receipts": {
     "keep_days": 30,
@@ -111,5 +114,10 @@
   },
   "state": {
     "branch": "loop-rat-state"
+  },
+  "notify": {
+    "//": "A command run when a shift ends with one of the verdicts in `on`. It gets RAT_VERDICT, RAT_NOTIFY_LOOP, RAT_NOTIFY_RECEIPT and RAT_NOTIFY_TEXT in the environment. Empty means silence.",
+    "command": "",
+    "on": "needs-review fail blocked interrupted"
   }
 }

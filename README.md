@@ -8,6 +8,10 @@ your coding agent on a schedule, keeps it inside rules you wrote down, grades
 what it did with a second agent, and leaves a dated receipt you read in the
 morning.
 
+<p align="center">
+  <img src="docs/assets/demo.gif" alt="rat init, a dry-run shift, and the receipt it left" width="760">
+</p>
+
 Not a framework, not a wrapper around the model. A dozen files of bash and
 python - plus one `act.sh` per loop - that answer the four questions any
 unattended agent has to answer before you can go to sleep:
@@ -258,6 +262,38 @@ receipts, which are evidence rather than memory and are kept as CI artifacts.
 [.github/workflows/nightly.yml](.github/workflows/nightly.yml) does the pull, the
 shift and the push in that order, and fails the run if the chain does not add up.
 
+### When something goes wrong repeatedly
+
+A loop that fails the same way three nights running has stopped being a loop and
+become a bill. It pauses itself:
+
+```
+pr-hunter has failed 3 times in a row - it is paused
+read the last receipt, then: bin/rat resume pr-hunter
+```
+
+Turning it back on is a separate decision, made by name, after you have read
+what happened. `caps.pause_after_failures` sets the count; `0` turns it off.
+
+### Being told, rather than remembering to look
+
+Nothing is integrated with anything. `notify.command` in `settings.json` is a
+shell command that runs when a shift ends with a verdict in `notify.on`, and it
+gets `RAT_VERDICT`, `RAT_NOTIFY_LOOP`, `RAT_NOTIFY_RECEIPT` and a one-line
+`RAT_NOTIFY_TEXT`:
+
+```json
+"notify": {
+  "command": "osascript -e \"display notification \\\"$RAT_NOTIFY_TEXT\\\" with title \\\"loop rat\\\"\"",
+  "on": "needs-review fail blocked interrupted"
+}
+```
+
+A desktop banner on macOS, `notify-send` on Linux, a `curl` to a chat, a line
+appended to a file - whatever you already read. The default is empty, and the
+default `on` list deliberately excludes `pass`: a night that went well is not
+worth interrupting anyone for.
+
 ### The record is checkable
 
 ```bash
@@ -435,9 +471,28 @@ and the diff, never the repository.
 
 ---
 
+## Windows, macOS, Linux
+
+- **macOS** - works as shipped. Stock bash 3.2 is enough; nothing here needs 4.
+- **Linux** - works as shipped.
+- **Windows** - two ways. **WSL** behaves exactly like Linux and needs nothing
+  said here. **Git Bash** works too: the harness finds python under whichever
+  name it has, kills a timed-out shift's children with `taskkill` when `pkill`
+  is missing, and `bin/rat cron --windows` prints a Task Scheduler command
+  instead of a crontab line - pointed at a small `.cmd` wrapper it can write for
+  you, because quoting bash inside `schtasks` inside `cmd` is a way to lose an
+  evening.
+
+```bash
+bin/rat doctor
+```
+
+names the platform and says what is missing before you trust a schedule to it.
+
 ## Requirements
 
-- bash 3.2 or newer (stock macOS is fine), python 3.8+, git
+- bash 3.2 or newer (stock macOS is fine), python 3 under any of `python3`,
+  `python` or `py`, and git
 - an agent CLI on your PATH. The default is `claude`, configured under `agent` in
   `settings.json`. Anything that takes a prompt on stdin and returns JSON works -
   change `command`, `args`, and the two field names.

@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.11.0 - 2026-09-05
+
+- **Windows.** WSL always worked; Git Bash now does too. Python is found under
+  `python3`, `python` or `py`; a timed-out shift's children are killed with
+  `taskkill` when there is no `pkill`; `bin/rat cron --windows` prints a Task
+  Scheduler command aimed at a `.cmd` wrapper it can write, because quoting bash
+  inside `schtasks` inside `cmd` is a way to lose an evening. `rat doctor` names
+  the platform and what is missing. `seq` is gone from the harness - Git Bash
+  does not always have it.
+- **A loop that keeps failing pauses itself.** Three failed nights in a row and
+  it refuses to start, names the count, and points at the receipt.
+  `bin/rat resume <loop>` clears it - by name, because that is a decision.
+- **`notify.command`.** A shell command run when a shift ends with a verdict you
+  care about, with the loop, the verdict and the receipt in its environment. Not
+  an integration: a banner, a curl, a line in a file, whatever you already read.
+  Silent by default, and never for a night that went well.
+- **Fixed: a corrupt `settings.json` no longer lets a shift run.** Every brake -
+  the denylist, the blast radius, the caps - reads from that file, so a shift
+  that ran anyway was running with them disconnected.
+- **Fixed: a plan with `timeout: not-a-number` crashed the shift** with a bash
+  error. It now warns which value it could not read and uses the default.
+- **Fixed: loop names are validated.** `bin/shift "../escape"` is refused rather
+  than resolved.
+- A demo in the README: `rat init`, a dry-run shift, and the receipt.
+- 184 checks in the smoke test.
+
 ## 0.10.0 - 2026-09-05
 
 Aimed at the person this is most useful to and least built for so far: someone
