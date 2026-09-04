@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # rat - front door for the loop rat harness.
 #
+#   rat init [--profile]     set this repository up: loops, schedule, caps
 #   rat list                 what is scheduled, and whether it is paused
 #   rat run <name>           run one shift now
 #   rat run-due              run every loop the schedule says is due (cron uses this)
@@ -32,7 +33,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 . "$HERE/lib/common.sh"
 
-RAT_VERSION="0.9.0"
+RAT_VERSION="0.10.0"
 SCHEDULE="$RAT_LOOPS_DIR/schedule.yml"
 SCHED_PY="$RAT_ROOT/bin/lib/schedule.py"
 
@@ -81,6 +82,7 @@ state = {
     "halted": os.path.exists(halt),
     "halt_reason": open(halt).read().strip() if os.path.exists(halt) else None,
     "spent_today_usd": round(spent, 4),
+    "calls_today": int(read(budget).get("calls", {}).get(day, 0)),
     "loops": read(checkpoint).get("loops", {}),
 }
 print(json.dumps(state, indent=2))
@@ -97,6 +99,14 @@ PY
   spent="$(rat_budget_today)"
   cap="$(rat_setting caps.max_usd_per_day 5.00)"
   printf 'today  $%s spent of $%s cap\n' "$spent" "$(printf '%.2f' "$cap")"
+  local calls call_cap
+  calls="$(rat_calls_today)"
+  call_cap="$(rat_setting caps.max_calls_per_day 0)"
+  if [ "${call_cap:-0}" != "0" ]; then
+    printf 'calls  %s of %s today\n' "$calls" "$call_cap"
+  else
+    printf 'calls  %s today\n' "$calls"
+  fi
   printf 'shifts %s receipts kept, %s day(s) on disk\n' \
     "$(find "$RAT_STATE_DIR/receipts" -name receipt.json 2>/dev/null | wc -l | tr -d ' ')" \
     "$(find "$RAT_STATE_DIR/receipts" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
@@ -457,6 +467,7 @@ cmd_resume() {
 }
 
 case "${1:-}" in
+  init)      shift; "$RAT_ROOT/bin/init" "$@" ;;
   list)      shift; cmd_list "$@" ;;
   run)       shift; "$RAT_ROOT/bin/shift" "$@" ;;
   run-due)   shift; cmd_run_due "$@" ;;

@@ -79,6 +79,11 @@ PROMPT="$OUT_DIR/$LABEL-prompt.md"
   echo '{"verdict":"pass|needs-review|fail","score":0-100,"notes":"one or two sentences","fix_first":"the single most important thing to change, or empty"}'
 } > "$PROMPT"
 
+# Grading is a reading task with a fixed shape, so it is the first place to
+# spend less. `grading.model` overrides whatever the loop itself uses.
+GRADE_MODEL="$(rat_setting grading.model '')"
+[ -n "$GRADE_MODEL" ] && export RAT_MODEL="$GRADE_MODEL"
+
 RAWS=""
 i=0
 while [ "$i" -lt "$GRADERS" ]; do

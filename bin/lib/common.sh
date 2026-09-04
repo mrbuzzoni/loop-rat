@@ -176,6 +176,24 @@ rat_with_lock() {
   return "$rc"
 }
 
+# On a subscription the dollar figure a CLI reports is notional - what you
+# actually spend is calls against your own quota, and a schedule that eats it is
+# a schedule you turn off. So the ledger counts both.
+rat_calls_today() {
+  rat_py - "$RAT_BUDGET" "$(rat_today)" <<'PY'
+import json, os, sys
+path, day = sys.argv[1], sys.argv[2]
+data = {}
+if os.path.exists(path):
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+    except ValueError:
+        data = {}
+print(int(data.get("calls", {}).get(day, 0)))
+PY
+}
+
 # Spend ledger, one bucket per day. Refuses to start a shift once the day's cap
 # is gone - the cheapest way to stop a runaway loop is to run out of allowance.
 rat_budget_today() {
@@ -196,17 +214,20 @@ PY
 rat_budget_add() {
   local amount="$1"
   local loop="${2:-unknown}"
+  local calls="${3:-0}"
   mkdir -p "$RAT_STATE_DIR"
-  rat_with_lock budget _rat_budget_write "$amount" "$loop"
+  rat_with_lock budget _rat_budget_write "$amount" "$loop" "$calls"
 }
 
 _rat_budget_write() {
   local amount="$1"
   local loop="$2"
-  rat_py - "$RAT_BUDGET" "$(rat_today)" "$amount" "$loop" <<'PY'
+  local calls="${3:-0}"
+  rat_py - "$RAT_BUDGET" "$(rat_today)" "$amount" "$loop" "$calls" <<'PY'
 import json, os, sys
 path, day, amount, loop = sys.argv[1], sys.argv[2], float(sys.argv[3]), sys.argv[4]
-data = {"days": {}, "by_loop": {}}
+calls = int(sys.argv[5]) if len(sys.argv) > 5 else 0
+data = {"days": {}, "by_loop": {}, "calls": {}}
 if os.path.exists(path):
     try:
         with open(path) as fh:
@@ -215,8 +236,10 @@ if os.path.exists(path):
         pass
 data.setdefault("days", {})
 data.setdefault("by_loop", {})
+data.setdefault("calls", {})
 data["days"][day] = round(float(data["days"].get(day, 0.0)) + amount, 4)
 data["by_loop"][loop] = round(float(data["by_loop"].get(loop, 0.0)) + amount, 4)
+data["calls"][day] = int(data["calls"].get(day, 0)) + calls
 with open(path, "w") as fh:
     json.dump(data, fh, indent=2)
     fh.write("\n")

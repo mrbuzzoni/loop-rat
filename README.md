@@ -65,6 +65,24 @@ coffee.
 
 ## Start
 
+Into a project you already have:
+
+```bash
+git clone https://github.com/mrbuzzoni/loop-rat.git
+./loop-rat/install.sh ~/code/your-project
+cd ~/code/your-project
+bin/rat init                 # looks at your project, installs loops that fit
+bin/shift digest --dry-run   # a whole shift, with the model stubbed
+bin/rat show                 # read the receipt it left
+```
+
+`rat init` asks nothing. It works out what the project is, installs the loops
+that suit it, writes a quiet schedule, sets the caps for how you pay, and
+schedules nothing - a loop that starts running because you installed it is a
+loop nobody decided to run.
+
+Or to look around first, without touching anything of yours:
+
 ```bash
 git clone https://github.com/mrbuzzoni/loop-rat.git
 cd loop-rat
@@ -451,6 +469,7 @@ thing stubbed.
 - [docs/writing-a-loop.md](docs/writing-a-loop.md) - the plan, the act script, the stop condition
 - [docs/safety.md](docs/safety.md) - what stops a shift, and in which order
 - [docs/receipts.md](docs/receipts.md) - reading a morning's worth in two minutes
+- [docs/scenarios.md](docs/scenarios.md) - five situations people actually use this for
 - [docs/loop-design.md](docs/loop-design.md) - the two questions, the autonomy ladder, the checklist
 - [docs/failure-modes.md](docs/failure-modes.md) - how loops actually fail, and which brake catches each
 - [ROADMAP.md](ROADMAP.md) - what comes next, and the four things that never will

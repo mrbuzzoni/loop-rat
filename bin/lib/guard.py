@@ -197,6 +197,9 @@ def main(argv):
                 })
             break
 
+    isolated = bool(os.environ.get("RAT_WORKDIR")) and \
+        os.environ.get("RAT_WORKDIR") != os.environ.get("RAT_ROOT")
+
     if files and not may_change:
         note = "a %s loop is not allowed to change files" % autonomy
         if not os.environ.get("RAT_WORKDIR") or os.environ.get("RAT_WORKDIR") == \
@@ -235,6 +238,21 @@ def main(argv):
         for pattern, label in SECRET_PATTERNS:
             if re.search(pattern, haystack):
                 verdict["violations"].append({"kind": "secret", "match": label})
+
+    # A report-only loop working in a throwaway checkout cannot reach anything:
+    # the checkout is deleted when the shift ends and no patch is ever applied
+    # from it. Installing dependencies there is a build step, not a violation.
+    # An assisted loop is different - its diff is meant to reach you, so a
+    # lockfile or a denied path in it still blocks.
+    if isolated and not may_change and verdict["violations"]:
+        verdict["observed"] = verdict["violations"]
+        verdict["violations"] = []
+        verdict["note"] = (
+            "%d thing(s) worth noting happened inside the throwaway checkout, "
+            "which is discarded when the shift ends: %s. Nothing from there "
+            "reaches the repository."
+            % (len(verdict["observed"]),
+               ", ".join(sorted({v.get("kind", "?") for v in verdict["observed"]}))))
 
     verdict["ok"] = not verdict["violations"]
     print(json.dumps(verdict, indent=2))

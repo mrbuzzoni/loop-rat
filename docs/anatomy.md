@@ -35,6 +35,10 @@ retune the whole harness:
 | `caps.max_usd_per_day` | the ceiling checked before a shift starts at all |
 | `caps.timeout_seconds` | how long an `act.sh` may run before it is killed |
 | `caps.max_files_changed` | the default blast radius, when a level does not set one |
+| `caps.max_calls_per_day` | calls, not dollars - the brake that matters on a flat subscription. 0 turns it off |
+| `agent.model`, `grading.model` | which model a loop uses, and which one reads its work. A plan's own `model:` wins |
+| `guard.ignore_paths` | build output and dependency directories, which nobody reviews |
+| `state.branch` | where `rat state push` leaves the memory between machines |
 | `guard.denylist` | globs a shift may never touch |
 | `guard.scan_secrets` | whether the diff is searched for keys and tokens |
 | `grading.mode` | `auto` runs the second agent, `off` skips it |

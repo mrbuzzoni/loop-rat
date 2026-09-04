@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.10.0 - 2026-09-05
+
+Aimed at the person this is most useful to and least built for so far: someone
+shipping fast with an agent, on a flat subscription, who is not going to write a
+plan file to get started.
+
+- **`bin/rat init`.** Looks at the project, installs the loops that fit it,
+  writes a quiet schedule, sets the caps for how you pay, and schedules nothing.
+  Two profiles: `pro` (the default - the brake is calls) and `api` (dollars).
+- **Calls are counted and capped**, because on a subscription that is what you
+  actually spend. `caps.max_calls_per_day` refuses to start a shift once the
+  day's calls are gone, `rat status` shows the count, and every attempt counts -
+  including the ones that failed.
+- **A loop can pick its own model.** `model: haiku` in a plan, or
+  `grading.model` for the reading step, which is where the easy saving is.
+- **Two packs for the repositories people actually have.** `secret-sweep` looks
+  for committed credentials in the files and in the history, and never prints
+  one - the finding is a position, because a receipt containing the key is a
+  second copy of the leak. `build-doctor` tries the install, build and test
+  steps in a clean checkout, which is how you find out that a fresh clone stopped
+  working eleven days ago.
+- **A discarded checkout is not a violation.** A report-only loop working in a
+  worktree was blocked by its own `node_modules` and lockfile. Those cannot reach
+  your repository, so they are recorded and not blocked - while an assisted
+  loop's patch, which is meant to reach you, still is.
+- **The installer no longer abandons a half-finished install** when an optional
+  file is missing from the copy it was run from, and it no longer carries this
+  repository's own loops or schedule into yours.
+- New: [docs/scenarios.md](docs/scenarios.md) - five situations people use this
+  for, what each costs, and when a loop is the wrong answer.
+- 164 checks in the smoke test.
+
 ## 0.9.0 - 2026-09-05
 
 The four things the roadmap still owed after 0.4 and 0.6.

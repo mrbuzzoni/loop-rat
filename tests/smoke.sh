@@ -18,6 +18,7 @@ LAB="$(mktemp -d)"
 trap 'rm -rf "$LAB"' EXIT
 
 cp -R "$SRC/bin" "$SRC/.claude" "$SRC/packs" "$SRC/CONTRACT.md" "$SRC/kill.sh" "$LAB/"
+cp "$SRC/install.sh" "$SRC/contract.local.example.md" "$LAB/"
 mkdir -p "$LAB/tests"
 cp "$SRC/tests/at_rule.py" "$LAB/tests/"
 mkdir -p "$LAB/state"
@@ -585,6 +586,101 @@ check "staged work stays staged"            "git diff --cached --name-only | gre
 check "the patch holds only the loop's file" "grep -q 'loop-made.txt' '$INPLACE/diff.patch' && ! grep -q 'app.txt' '$INPLACE/diff.patch'"
 git reset -q app.txt; git checkout -- app.txt 2>/dev/null; rm -f loop-made.txt
 rm -rf .claude/loops/_inplace
+
+section "paying for it"
+mkdir -p state/scratch
+cat > echo-agent <<'EOF'
+#!/usr/bin/env python3
+import json, sys
+sys.stdin.read()
+print(json.dumps({"result": "args: " + " ".join(sys.argv[1:]), "total_cost_usd": 0.01}))
+EOF
+chmod +x echo-agent
+cp .claude/loops/settings.json /tmp/rat-settings-real5.json
+python3 - <<'PY'
+import json
+p = ".claude/loops/settings.json"
+s = json.load(open(p))
+s["agent"] = {"command": "./echo-agent", "args": ["-p"], "result_field": "result",
+              "cost_field": "total_cost_usd", "retries": 0, "model_flag": "--model"}
+json.dump(s, open(p, "w"), indent=2)
+PY
+RAT_RECEIPT="$PWD/state/scratch" RAT_LOOP=m bin/rat-agent --tag plain > /tmp/rat-model1.out 2>/dev/null <<< "hi"
+RAT_MODEL=haiku RAT_RECEIPT="$PWD/state/scratch" RAT_LOOP=m bin/rat-agent --tag cheap > /tmp/rat-model2.out 2>/dev/null <<< "hi"
+check "a loop can pick a cheaper model"     "grep -q -- '--model haiku' /tmp/rat-model2.out"
+check "and the default is left alone"       "! grep -q -- '--model' /tmp/rat-model1.out"
+check "calls are counted, not only dollars" "python3 -c \"
+import json
+b = json.load(open('state/budget.json'))
+assert sum(b['calls'].values()) >= 2, b
+\""
+rm -rf state/scratch
+
+python3 - <<'PY'
+import json
+p = ".claude/loops/settings.json"
+s = json.load(open(p))
+s["caps"]["max_calls_per_day"] = 1
+json.dump(s, open(p, "w"), indent=2)
+PY
+bin/shift digest >/dev/null 2>&1
+bin/shift digest >/dev/null 2>&1
+RC=$?
+check "a used-up day starts no shift"       "test $RC -eq 75"
+check "and says so in the trace"            "grep -q 'reason=calls' state/trace.log"
+cp /tmp/rat-settings-real5.json .claude/loops/settings.json
+rm -f echo-agent
+
+section "setting up a strange repository"
+NEWREPO="$(mktemp -d)"
+( cd "$NEWREPO" && git init -q . \
+  && printf '{"name":"app","scripts":{"build":"true","test":"true"}}\n' > package.json \
+  && git add -A && git -c user.email=s@t -c user.name=s commit -qm x ) >/dev/null 2>&1
+./install.sh "$NEWREPO" > /tmp/rat-install.out 2>&1
+check "the installer leaves nothing scheduled" "grep -q 'loops: \[\]' '$NEWREPO/.claude/loops/schedule.yml'"
+check "and does not carry this repo's loops"   "test ! -d '$NEWREPO/.claude/loops/docs-drift'"
+( cd "$NEWREPO" && bin/rat init > /tmp/rat-init.out 2>&1 )
+check "init recognises a node project"         "grep -q 'node project' /tmp/rat-init.out"
+check "it installs loops that fit"             "test -d '$NEWREPO/.claude/loops/build-doctor' && test -d '$NEWREPO/.claude/loops/secret-sweep'"
+check "it writes a schedule"                   "grep -q 'name: digest' '$NEWREPO/.claude/loops/schedule.yml'"
+check "the code-changing loop starts off"      "python3 -c \"
+import sys
+text = open('$NEWREPO/.claude/loops/schedule.yml').read()
+block = text.split('name: test-mender')[1] if 'test-mender' in text else ''
+assert 'enabled: false' in block, block
+\""
+check "the caps are set for a subscription"    "python3 -c \"
+import json
+caps = json.load(open('$NEWREPO/.claude/loops/settings.json'))['caps']
+assert caps['max_calls_per_day'] == 12, caps
+\""
+( cd "$NEWREPO" && bin/rat doctor > /tmp/rat-newdoctor.out 2>&1 )
+check "and the result passes its own doctor"   "grep -q 'nothing blocking' /tmp/rat-newdoctor.out"
+( cd "$NEWREPO" && bin/shift secret-sweep --dry-run >/dev/null 2>&1 )
+RC=$?
+check "a fresh install can run a shift"        "test $RC -le 2"
+rm -rf "$NEWREPO"
+
+section "loops that build things"
+mkdir -p .claude/loops/_installer
+printf -- '---\nname: _installer\nautonomy: report-only\nworktree: true\nrubrics: []\ntimeout: 60\n---\ninstall\n' > .claude/loops/_installer/plan.md
+printf '#!/usr/bin/env bash\nmkdir -p node_modules/pkg\nprintf "x\\n" > node_modules/pkg/index.js\nprintf "{}\\n" > package-lock.json\necho "installed"\n' > .claude/loops/_installer/act.sh
+chmod +x .claude/loops/_installer/act.sh
+bin/shift _installer --dry-run >/dev/null 2>&1
+RC=$?
+INST="$(find state/receipts -type d -name '*_installer' | sort | tail -n 1)"
+check "a discarded checkout is not a violation" "test $RC -le 2"
+check "but what happened there is recorded"     "grep -q 'observed\|note' '$INST/guard.json'"
+rm -rf .claude/loops/_installer
+
+mkdir -p .claude/loops/_lockfile
+printf -- '---\nname: _lockfile\nautonomy: assisted\nworktree: true\nrubrics: []\ntimeout: 60\n---\nwrite\n' > .claude/loops/_lockfile/plan.md
+printf '#!/usr/bin/env bash\nprintf "{}\\n" > package-lock.json\necho done\n' > .claude/loops/_lockfile/act.sh
+chmod +x .claude/loops/_lockfile/act.sh
+bin/shift _lockfile --dry-run >/dev/null 2>&1
+RC=$?
+check "a patch meant for you is still guarded" "test $RC -eq 3"
+rm -rf .claude/loops/_lockfile
 
 section "rubric packs"
 printf 'diff --git a/src/app.py b/src/app.py\n+++ b/src/app.py\n' > /tmp/rat-py.patch

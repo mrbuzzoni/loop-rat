@@ -38,6 +38,7 @@ mkdir -p "$OUT_DIR"
 RAW="$OUT_DIR/agent-$TAG.json"
 
 AGENT_CMD="$(rat_setting agent.command claude)"
+MODEL_FLAG="$(rat_setting agent.model_flag --model)"
 RESULT_FIELD="$(rat_setting agent.result_field result)"
 COST_FIELD="$(rat_setting agent.cost_field total_cost_usd)"
 
@@ -95,6 +96,13 @@ fi
 # read_args prints shell-quoted words, so eval is what makes an argument with a
 # space in it survive - plain word splitting would tear it in half.
 eval "ARGS=($(read_args))"
+
+# A loop that only summarises numbers does not need the model that writes code.
+# On a subscription this is the difference between a schedule you can afford to
+# run every day and one you switch off after a week.
+if [ -n "${RAT_MODEL:-}" ] && [ -n "$MODEL_FLAG" ]; then
+  ARGS=(${ARGS[@]+"${ARGS[@]}"} "$MODEL_FLAG" "$RAT_MODEL")
+fi
 RETRIES="$(rat_setting agent.retries 2)"
 DELAY="$(rat_setting agent.retry_delay_seconds 20)"
 COST_FILE="$OUT_DIR/agent-$TAG.cost"
@@ -115,8 +123,9 @@ while :; do
   rat_py "$RAT_ROOT/bin/lib/agent_result.py" "$RAW" "$COST_FILE" \
     "$RESULT_FIELD" "$COST_FIELD" > "$OUT_DIR/agent-$TAG.answer" || RC=$?
 
-  # A failed attempt still costs money, so it still goes in the ledger.
-  rat_budget_add "$(cat "$COST_FILE" 2>/dev/null || echo 0)" "${RAT_LOOP:-unknown}"
+  # A failed attempt still costs money and still spends a call, so it goes in
+  # the ledger either way.
+  rat_budget_add "$(cat "$COST_FILE" 2>/dev/null || echo 0)" "${RAT_LOOP:-unknown}" 1
 
   if [ "$RC" -eq 0 ]; then
     if [ "$AGENT_RC" -ne 0 ]; then RC="$AGENT_RC"; fi

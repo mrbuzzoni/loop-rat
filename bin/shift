@@ -59,6 +59,9 @@ AUTONOMY="$(rat_py "$RAT_CONF" fm-get "$PLAN" autonomy 2>/dev/null || true)"
 export RAT_AUTONOMY="$AUTONOMY"
 VERIFY_CMD="$(rat_py "$RAT_CONF" fm-get "$PLAN" verify 2>/dev/null || true)"
 USE_WORKTREE="$(rat_py "$RAT_CONF" fm-get "$PLAN" worktree 2>/dev/null || true)"
+MODEL="$(rat_py "$RAT_CONF" fm-get "$PLAN" model 2>/dev/null || true)"
+[ -n "$MODEL" ] || MODEL="$(rat_setting agent.model '')"
+export RAT_MODEL="$MODEL"
 REPAIR_LIMIT="$(rat_py "$RAT_CONF" fm-get "$PLAN" repair 2>/dev/null || true)"
 [ -n "$REPAIR_LIMIT" ] || REPAIR_LIMIT=0
 # Two is the ceiling whatever a plan asks for. A third attempt at the same
@@ -70,6 +73,16 @@ if rat_py -c "import sys; sys.exit(0 if float(sys.argv[1]) >= float(sys.argv[2])
   rat_warn "daily budget spent ($SPENT_TODAY of $DAY_CAP) - not starting a shift"
   rat_trace preflight skipped "reason=budget spent=$SPENT_TODAY cap=$DAY_CAP"
   exit 75
+fi
+
+CALL_CAP="$(rat_setting caps.max_calls_per_day 0)"
+if [ "${CALL_CAP:-0}" != "0" ]; then
+  CALLS_TODAY="$(rat_calls_today)"
+  if [ "$CALLS_TODAY" -ge "$CALL_CAP" ]; then
+    rat_warn "today's $CALL_CAP calls are used ($CALLS_TODAY made) - not starting a shift"
+    rat_trace preflight skipped "reason=calls used=$CALLS_TODAY cap=$CALL_CAP"
+    exit 75
+  fi
 fi
 
 if ! rat_lock "$RAT_LOOP" "$((TIMEOUT + 120))"; then
@@ -119,7 +132,7 @@ mkdir -p "$RAT_RECEIPT"
 STARTED_EPOCH="$(rat_epoch)"
 STARTED_ISO="$(rat_now_iso)"
 
-rat_trace preflight ok "autonomy=$AUTONOMY timeout=${TIMEOUT}s cap=\$$MAX_USD dry=${RAT_DRY_RUN:-0}"
+rat_trace preflight ok "autonomy=$AUTONOMY model=${MODEL:-default} timeout=${TIMEOUT}s cap=\$$MAX_USD dry=${RAT_DRY_RUN:-0}"
 
 # ------------------------------------------------------------------ prompt --
 {

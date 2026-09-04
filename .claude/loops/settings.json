@@ -32,7 +32,8 @@
     "max_usd_per_shift": 2.5,
     "max_usd_per_day": 12.0,
     "timeout_seconds": 1200,
-    "max_files_changed": 10
+    "max_files_changed": 10,
+    "max_calls_per_day": 40
   },
   "guard": {
     "scan_secrets": true,
@@ -80,6 +81,24 @@
       "package-lock.json",
       "yarn.lock",
       "pnpm-lock.yaml"
+    ],
+    "ignore_paths": [
+      "node_modules/**",
+      "**/node_modules/**",
+      "venv/**",
+      ".venv/**",
+      "**/__pycache__/**",
+      "**/*.pyc",
+      "target/**",
+      "dist/**",
+      "build/**",
+      ".next/**",
+      ".pytest_cache/**",
+      ".mypy_cache/**",
+      ".ruff_cache/**",
+      "*.egg-info/**",
+      ".gradle/**",
+      "vendor/**"
     ]
   },
   "grading": {

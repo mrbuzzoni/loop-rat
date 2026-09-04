@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+# init - set the harness up for this project, without asking you anything.
+#
+#   bin/rat init [--profile pro|api] [--force]
+#
+# Looks at what the project is, installs the loops that fit it, writes a quiet
+# schedule, and sets the caps for how you pay. Everything it writes is a file you
+# can read and change afterwards - there is no hidden state and no account.
+#
+#   --profile pro   (default) you are on a flat subscription. The limit that
+#                   matters is calls against your own quota, so the caps count
+#                   calls, the cheap loops use a small model, and the schedule
+#                   is deliberately quiet.
+#   --profile api   you pay per token. The caps are in dollars, and the models
+#                   are whatever your agent defaults to.
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+. "$HERE/lib/common.sh"
+
+PROFILE="pro"
+FORCE=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --profile) PROFILE="$2"; shift 2 ;;
+    --force)   FORCE=1; shift ;;
+    -h|--help) awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"; exit 0 ;;
+    *) rat_err "init: unknown argument $1"; exit 2 ;;
+  esac
+done
+
+case "$PROFILE" in
+  pro|api) ;;
+  *) rat_err "init: profile must be 'pro' or 'api'"; exit 2 ;;
+esac
+
+# ------------------------------------------------------------ what is this? --
+KIND="a project"
+TEST_CMD=""
+BUILDABLE=0
+[ -f "$RAT_ROOT/package.json" ] && { KIND="a node project"; BUILDABLE=1; }
+[ -f "$RAT_ROOT/pyproject.toml" ] || [ -f "$RAT_ROOT/requirements.txt" ] && \
+  { KIND="a python project"; BUILDABLE=1; }
+[ -f "$RAT_ROOT/go.mod" ] && { KIND="a go project"; BUILDABLE=1; }
+[ -f "$RAT_ROOT/Cargo.toml" ] && { KIND="a rust project"; BUILDABLE=1; }
+
+if [ -f "$RAT_ROOT/Makefile" ] && grep -qE '^test:' "$RAT_ROOT/Makefile"; then
+  TEST_CMD="make test"
+elif [ -f "$RAT_ROOT/package.json" ] && grep -q '"test"' "$RAT_ROOT/package.json"; then
+  TEST_CMD="npm test --silent"
+elif [ -d "$RAT_ROOT/tests" ] || [ -d "$RAT_ROOT/test" ]; then
+  TEST_CMD="pytest -q"
+fi
+
+rat_say "this looks like $KIND"
+
+# ------------------------------------------------------------- which loops --
+INSTALLED=""
+install_pack() {
+  local name="$1"
+  [ -d "$RAT_LOOPS_DIR/$name" ] && { printf '  have   %s\n' "$name"; return 0; }
+  if [ -d "$RAT_ROOT/packs/$name" ]; then
+    cp -R "$RAT_ROOT/packs/$name" "$RAT_LOOPS_DIR/$name"
+    chmod +x "$RAT_LOOPS_DIR/$name"/*.sh 2>/dev/null || true
+    printf '  add    %s\n' "$name"
+    INSTALLED="$INSTALLED $name"
+  fi
+}
+
+echo
+rat_say "loops for this repository"
+install_pack secret-sweep
+[ "$BUILDABLE" = "1" ] && install_pack build-doctor
+[ -n "$TEST_CMD" ] && [ -d "$RAT_LOOPS_DIR/test-mender" ] && printf '  have   test-mender\n'
+[ -d "$RAT_LOOPS_DIR/digest" ] && printf '  have   digest\n'
+
+# ---------------------------------------------------------------- schedule --
+SCHEDULE="$RAT_LOOPS_DIR/schedule.yml"
+if [ -f "$SCHEDULE" ] && [ "$FORCE" = "0" ] \
+   && ! grep -q "^# written by rat init" "$SCHEDULE" \
+   && ! grep -q "^# placeholder" "$SCHEDULE"; then
+  rat_warn "schedule.yml is yours already - leaving it alone (--force overwrites)"
+else
+  {
+    echo "# written by rat init - edit freely, it is only a file"
+    echo "#"
+    echo "# Quiet on purpose. A loop that fires more often than the thing it"
+    echo "# watches changes spends most of its shifts writing 'nothing to do',"
+    echo "# and you stop reading the receipts - which is the moment it stops"
+    echo "# being useful."
+    echo
+    echo "loops:"
+    echo "  - name: digest"
+    echo "    every: 1d"
+    echo "    at: \"08:30\""
+    echo "    days: mon-fri"
+    echo "    enabled: true"
+    echo
+    echo "  - name: secret-sweep"
+    echo "    every: 1d"
+    echo "    at: \"08:00\""
+    echo "    days: mon"
+    echo "    enabled: true"
+    if [ "$BUILDABLE" = "1" ]; then
+      echo
+      echo "  - name: build-doctor"
+      echo "    every: 1d"
+      echo "    at: \"07:30\""
+      echo "    days: mon,thu"
+      echo "    enabled: true"
+    fi
+    if [ -n "$TEST_CMD" ] && [ -d "$RAT_LOOPS_DIR/test-mender" ]; then
+      echo
+      echo "  # This one changes code. It starts switched off on purpose: read a"
+      echo "  # week of receipts from the others first, then turn it on."
+      echo "  - name: test-mender"
+      echo "    every: 1d"
+      echo "    at: \"03:00\""
+      echo "    days: all"
+      echo "    enabled: false"
+    fi
+  } > "$SCHEDULE"
+  printf '  wrote  %s\n' "${SCHEDULE#"$RAT_ROOT"/}"
+fi
+
+# -------------------------------------------------------------------- caps --
+rat_py - "$RAT_SETTINGS" "$PROFILE" <<'PY'
+import json, sys
+path, profile = sys.argv[1], sys.argv[2]
+with open(path) as fh:
+    settings = json.load(fh)
+
+caps = settings.setdefault("caps", {})
+agent = settings.setdefault("agent", {})
+grading = settings.setdefault("grading", {})
+
+if profile == "pro":
+    # A flat subscription has no per-call price - what it has is a quota you
+    # also need for your own work. So the brake is calls, and the cheap loops
+    # get the small model.
+    caps["max_calls_per_day"] = 12
+    caps["max_usd_per_day"] = 12.00
+    caps["max_usd_per_shift"] = 2.50
+    agent.setdefault("model", "")
+    grading["mode"] = "auto"
+    grading["graders"] = 1
+    grading["model"] = "haiku"
+else:
+    caps["max_calls_per_day"] = 0          # no call cap; dollars are the brake
+    caps["max_usd_per_day"] = 12.00
+    caps["max_usd_per_shift"] = 2.50
+    grading.pop("model", None)
+
+with open(path, "w") as fh:
+    json.dump(settings, fh, indent=2)
+    fh.write("\n")
+PY
+
+echo
+if [ "$PROFILE" = "pro" ]; then
+  rat_say "profile: pro - 12 calls a day, small model for reading, quiet schedule"
+else
+  rat_say "profile: api - \$12 a day, \$2.50 a shift, your agent's default models"
+fi
+
+echo
+rat_say "three commands, in this order"
+cat <<'NEXT'
+  1. bin/rat doctor                  is anything obviously wrong?
+  2. bin/shift digest --dry-run      a whole shift, with the model stubbed
+  3. bin/rat show                    read the receipt it left
+
+when that reads the way you want, put it on a clock:
+
+     bin/rat cron | pbcopy && crontab -e
+
+everything it will ever do is written in CONTRACT.md. Read that file next -
+it is short, and it is the only thing standing between a schedule and your
+repository.
+NEXT
+rat_trace init done "profile=$PROFILE kind=$KIND installed=${INSTALLED:-none}"
