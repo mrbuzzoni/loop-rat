@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# grade - read a shift's work against the rubrics, with one grader or several.
+#
+#   bin/grade <receipt-dir> [--plan plan.md] [--rubrics "code safety"]
+#             [--graders N] [--out grade.json] [--label grade]
+#
+# Used by `bin/shift` when a shift ends, and by `bin/calibrate` to re-read old
+# work against rubrics that have since changed. It never does the work and never
+# sees the repository - only what the shift reported and the diff it left, which
+# is the whole point of a second reader.
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+. "$HERE/lib/common.sh"
+
+RECEIPT=""
+PLAN=""
+RUBRIC_NAMES=""
+GRADERS=""
+OUT=""
+LABEL="grade"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --plan)    PLAN="$2"; shift 2 ;;
+    --rubrics) RUBRIC_NAMES="$2"; shift 2 ;;
+    --graders) GRADERS="$2"; shift 2 ;;
+    --out)     OUT="$2"; shift 2 ;;
+    --label)   LABEL="$2"; shift 2 ;;
+    -h|--help) awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"; exit 0 ;;
+    -*)        rat_err "grade: unknown flag $1"; exit 2 ;;
+    *)         RECEIPT="$1"; shift ;;
+  esac
+done
+
+[ -n "$RECEIPT" ] || { rat_err "usage: bin/grade <receipt-dir>"; exit 2; }
+[ -d "$RECEIPT" ] || RECEIPT="$RAT_ROOT/$RECEIPT"
+[ -f "$RECEIPT/output.md" ] || { rat_err "no output.md in $RECEIPT - nothing to grade"; exit 2; }
+
+[ -n "$OUT" ] || OUT="$RECEIPT/grade.json"
+[ -n "$GRADERS" ] || GRADERS="$(rat_setting grading.graders 1)"
+[ "$GRADERS" -ge 1 ] 2>/dev/null || GRADERS=1
+# Three readings of the same paragraph is a committee, not a check.
+[ "$GRADERS" -gt 3 ] 2>/dev/null && GRADERS=3
+
+OUT_DIR="$(dirname "$OUT")"
+mkdir -p "$OUT_DIR"
+
+# Which rubrics: the ones the plan named, plus a language pack for anything the
+# diff actually touched.
+RUBRIC_FILES="$(rat_py "$RAT_ROOT/bin/lib/rubrics.py" \
+  "$RAT_LOOPS_DIR/rubrics" "$RECEIPT/diff.patch" $RUBRIC_NAMES)"
+
+PROMPT="$OUT_DIR/$LABEL-prompt.md"
+{
+  echo "You are the grader for a shift that already ran. You did not do the work,"
+  echo "and you are not being asked to improve it - only to say whether it holds."
+  echo
+  for file in $RUBRIC_FILES; do
+    echo "### rubric: $(basename "$file" .md)"
+    cat "$file"
+    echo
+  done
+  if [ -n "$PLAN" ] && [ -f "$PLAN" ]; then
+    echo "### what the shift was asked to do"
+    rat_py "$RAT_CONF" body "$PLAN"
+    echo
+  fi
+  echo "### what the shift reported"
+  head -c 20000 "$RECEIPT/output.md"
+  echo
+  if [ -s "$RECEIPT/diff.patch" ]; then
+    echo "### the diff it left behind"
+    head -c 20000 "$RECEIPT/diff.patch"
+    echo
+  fi
+  echo "Reply with one JSON object and nothing else:"
+  echo '{"verdict":"pass|needs-review|fail","score":0-100,"notes":"one or two sentences","fix_first":"the single most important thing to change, or empty"}'
+} > "$PROMPT"
+
+RAWS=""
+i=0
+while [ "$i" -lt "$GRADERS" ]; do
+  i=$((i + 1))
+  RAW="$OUT_DIR/$LABEL-$i.raw"
+  # Each grader is a separate call with no sight of the other's answer. Two
+  # graders comparing notes is one grader with extra steps.
+  RAT_RECEIPT="$OUT_DIR" "$RAT_ROOT/bin/rat-agent" --tag "$LABEL-$i" \
+    < "$PROMPT" > "$RAW" 2>>"$OUT_DIR/$LABEL.stderr"
+  RAWS="$RAWS $RAW"
+done
+
+# shellcheck disable=SC2086
+VERDICT="$(rat_py "$RAT_ROOT/bin/lib/merge_grades.py" "$OUT" $RAWS)"
+
+AGREEMENT="$(rat_json_field "$OUT" agreement true)"
+if [ "$AGREEMENT" = "0" ] || [ "$AGREEMENT" = "false" ]; then
+  rat_trace grade disagreed "graders=$GRADERS verdicts=$(rat_json_field "$OUT" verdicts -)"
+fi
+
+printf '%s\n' "$VERDICT"

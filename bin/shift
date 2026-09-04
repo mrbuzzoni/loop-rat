@@ -361,64 +361,13 @@ elif [ "$ACT_STATUS" != "ok" ]; then
 elif [ "$VERIFY_STATUS" = "fail" ]; then
   VERDICT="fail"
 elif [ -n "$RUBRICS" ] && [ "$GRADE_MODE" != "off" ]; then
-  {
-    echo "You are the grader for a shift that already ran. You did not do the work."
-    echo "Read the rubrics, then the shift output, then answer."
-    echo
-    for rubric in $RUBRICS; do
-      [ -f "$RAT_LOOPS_DIR/rubrics/$rubric.md" ] || continue
-      echo "### rubric: $rubric"
-      cat "$RAT_LOOPS_DIR/rubrics/$rubric.md"
-      echo
-    done
-    echo "### what the shift was asked to do"
-    rat_py "$RAT_CONF" body "$PLAN"
-    echo
-    echo "### what the shift reported"
-    head -c 20000 "$RAT_RECEIPT/output.md"
-    echo
-    if [ -s "$RAT_RECEIPT/diff.patch" ]; then
-      echo "### the diff it left behind"
-      head -c 20000 "$RAT_RECEIPT/diff.patch"
-    fi
-    echo
-    echo "Reply with one JSON object and nothing else:"
-    echo '{"verdict":"pass|needs-review|fail","score":0-100,"notes":"one or two sentences","fix_first":"the single most important thing to change, or empty"}'
-  } | "$RAT_ROOT/bin/rat-agent" --tag grade > "$RAT_RECEIPT/grade.raw" 2>>"$RAT_RECEIPT/stderr.log"
-
-  VERDICT="$(rat_py - "$RAT_RECEIPT/grade.raw" "$RAT_RECEIPT/grade.json" <<'PY'
-import json, re, sys
-raw = open(sys.argv[1]).read()
-match = re.search(r"\{.*\}", raw, re.S)
-grade = {"verdict": "needs-review", "score": None,
-         "notes": "the grader answered, but not with JSON this harness could read"}
-if match:
-    try:
-        parsed = json.loads(match.group(0))
-        if isinstance(parsed, dict) and parsed.get("verdict"):
-            grade = parsed
-    except ValueError:
-        pass
-# Say which of the three silences this was. "No usable JSON" when the grader was
-# never called is exactly the kind of misleading receipt this project exists to
-# avoid.
-if "[dry run]" in raw:
-    grade = {"verdict": "needs-review", "score": None,
-             "notes": "dry run - no grader was called"}
-elif "spend cap" in raw:
-    grade = {"verdict": "needs-review", "score": None,
-             "notes": "no grader ran: the shift was out of budget before it could "
-                      "be graded, so this work is unreviewed rather than approved"}
-elif not raw.strip():
-    grade = {"verdict": "needs-review", "score": None,
-             "notes": "no grader ran: the grading call produced nothing"}
-with open(sys.argv[2], "w") as fh:
-    json.dump(grade, fh, indent=2)
-    fh.write("\n")
-print(grade["verdict"])
-PY
-)"
-  rat_trace grade "$VERDICT" "score=$(rat_json_field "$RAT_RECEIPT/grade.json" score -)"
+  # The reading is done by bin/grade so that `rat calibrate` can repeat it later
+  # against rubrics that have changed since, using the same code path.
+  VERDICT="$("$RAT_ROOT/bin/grade" "$RAT_RECEIPT" \
+    --plan "$PLAN" --rubrics "$RUBRICS" 2>>"$RAT_RECEIPT/stderr.log")"
+  [ -n "$VERDICT" ] || VERDICT="needs-review"
+  rat_trace grade "$VERDICT" \
+    "score=$(rat_json_field "$RAT_RECEIPT/grade.json" score -) graders=$(rat_json_field "$RAT_RECEIPT/grade.json" graders 1)"
 else
   VERDICT="pass"
 fi

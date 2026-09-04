@@ -9,7 +9,7 @@ a dry run does not get written. Anything that removes a brake is not a feature.
 Shipped work lives in [CHANGELOG.md](CHANGELOG.md); this file is only the part
 that has not happened yet.
 
-## Standing today - v0.8.0
+## Standing today - v0.9.0
 
 - the contract: rules committed, personal overrides gitignored
 - the guard, the caps, `kill.sh`: denylist, blast radius, spend ledger, halt file
@@ -18,8 +18,10 @@ that has not happened yet.
 - a hash-chained trace, so the record says whether it has been edited
 - policy per path, so the harness's own code is out of reach of its loops
 - installable packs, and two of them
+- rubric packs per language, two graders when you want them, and `rat calibrate`
+- memory that travels on its own branch, so the schedule can leave the laptop
 - receipts and grading: one folder per shift, graded by a second agent
-- five loops, two packs, 129 checks, no services
+- five loops, two packs, 147 checks, no services
 
 ## 0.4 - read the night faster - shipped
 
@@ -33,25 +35,27 @@ landed: `rat watch`, `rat replay`, the weekly digest, and `rat show --diff`.
 | ~~**weekly digest**~~ | **shipped in 0.6.0** - the digest covers the whole week on Mondays |
 | ~~**`rat show --diff`**~~ | **shipped in 0.6.0** - the patch first, the prose about it second |
 
-## 0.5 - off the laptop
+## 0.5 - off the laptop - shipped
 
-A schedule that depends on a lid being open is not a schedule.
+A schedule that depends on a lid being open is not a schedule. Only the launchd
+installer is left, and cron already covers the same ground.
 
 | | |
 |---|---|
-| **`run-due` in Actions** | the tick keeps time on a machine that does not sleep |
-| **state on a branch** | laptop and CI share one checkpoint instead of disagreeing about what already ran |
+| ~~**`run-due` in Actions**~~ | **shipped in 0.9.0** - pull the memory, run, push it back |
+| ~~**state on a branch**~~ | **shipped in 0.9.0** - `rat state pull\|push`, receipts excluded |
 | **`rat cron --launchd`** | macOS native, so a closed lid delays a shift rather than skipping the night |
 
-## 0.6 - sharper graders
+## 0.6 - sharper graders - shipped
 
-The grader is the part with an opinion, and opinions need calibration.
+The grader is the part with an opinion, and opinions need calibration. All three
+landed.
 
 | | |
 |---|---|
-| **rubric packs** | per language and per repository, swappable, so a python project is not graded by a rubric written for a shell harness |
-| **two graders, one verdict** | run two and let them disagree. Agreement is cheap; disagreement is the queue for your morning |
-| **`rat calibrate`** | replay old receipts against a changed rubric and see which past verdicts flip. Edit rubrics with evidence, not with vibes |
+| ~~**rubric packs**~~ | **shipped in 0.9.0** - chosen by what the diff touched, not by configuration |
+| ~~**two graders, one verdict**~~ | **shipped in 0.9.0** - `grading.graders: 2`, and `rat receipts --disagreed` is the queue |
+| ~~**`rat calibrate`**~~ | **shipped in 0.9.0** - and the originals stay untouched unless you ask |
 
 ## 0.7 - the work itself - shipped
 

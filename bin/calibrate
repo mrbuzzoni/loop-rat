@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# calibrate - re-read old work against the rubrics as they are today.
+#
+#   bin/calibrate [--days N] [--loop NAME] [--limit N] [--apply]
+#
+# A rubric is a prompt, and editing one is editing behaviour you cannot see.
+# This grades receipts you have already read, with today's rubrics, and shows
+# which verdicts move. A change that flips nothing was decoration; a change that
+# flips everything was not the change you thought you were making.
+#
+# It never touches the original receipts. Each run writes into
+# state/calibrations/<timestamp>/, and only `--apply` copies the new verdicts
+# back over the old ones - which you should do rarely, and only when the new
+# reading is the one you trust.
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+. "$HERE/lib/common.sh"
+
+DAYS=14
+LOOP_FILTER=""
+LIMIT=10
+APPLY=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --days)  DAYS="$2"; shift 2 ;;
+    --loop)  LOOP_FILTER="$2"; shift 2 ;;
+    --limit) LIMIT="$2"; shift 2 ;;
+    --apply) APPLY=1; shift ;;
+    -h|--help) awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"; exit 0 ;;
+    *) rat_err "calibrate: unknown argument $1"; exit 2 ;;
+  esac
+done
+
+RUN="$RAT_STATE_DIR/calibrations/$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$RUN"
+
+# Which receipts: graded ones, newest first, inside the window.
+CANDIDATES="$(rat_py "$RAT_ROOT/bin/lib/list_receipts.py" "$RAT_STATE_DIR/receipts" \
+  --limit "$LIMIT" --since "${DAYS}d" ${LOOP_FILTER:+--loop "$LOOP_FILTER"} --json \
+  | rat_py -c '
+import json, sys
+for row in json.load(sys.stdin):
+    if row.get("verdict") in ("pass", "needs-review", "fail"):
+        print(row["path"])
+')"
+
+if [ -z "$CANDIDATES" ]; then
+  rat_say "no graded receipts in the last ${DAYS} day(s) to calibrate against"
+  exit 0
+fi
+
+printf '%-11s %-14s %-13s %-13s %s\n' DATE LOOP WAS NOW MOVED
+MOVED=0
+TOTAL=0
+
+for path in $CANDIDATES; do
+  RECEIPT="$RAT_ROOT/$path"
+  [ -f "$RECEIPT/receipt.json" ] || continue
+  LOOP="$(rat_json_field "$RECEIPT/receipt.json" loop '?')"
+  WAS="$(rat_json_field "$RECEIPT/grade.json" verdict '-')"
+  PLAN="$RAT_LOOPS_DIR/$LOOP/plan.md"
+  RUBRICS="$(rat_py "$RAT_CONF" fm-get "$PLAN" rubrics 2>/dev/null | tr -d '[]"' | tr ',' ' ' || true)"
+  [ -n "$RUBRICS" ] || continue
+
+  OUT_DIR="$RUN/$(basename "$path")"
+  mkdir -p "$OUT_DIR"
+  # The old work, today's rubrics. Nothing is re-run and nothing is re-gathered.
+  NOW="$(RAT_LOOP="$LOOP" "$RAT_ROOT/bin/grade" "$RECEIPT" \
+      --plan "$PLAN" --rubrics "$RUBRICS" \
+      --out "$OUT_DIR/grade.json" --label recheck 2>>"$OUT_DIR/stderr.log")"
+  [ -n "$NOW" ] || NOW="-"
+
+  TOTAL=$((TOTAL + 1))
+  MARK=""
+  if [ "$WAS" != "$NOW" ]; then
+    MARK="<-- moved"
+    MOVED=$((MOVED + 1))
+  fi
+  printf '%-11s %-14s %-13s %-13s %s\n' \
+    "$(rat_json_field "$RECEIPT/receipt.json" started '' | cut -c1-10)" \
+    "$LOOP" "$WAS" "$NOW" "$MARK"
+
+  if [ "$APPLY" = "1" ]; then
+    cp "$OUT_DIR/grade.json" "$RECEIPT/grade.json"
+  fi
+done
+
+echo
+COST="$(rat_py "$RAT_ROOT/bin/lib/sum_cost.py" "$RUN" 2>/dev/null || echo 0)"
+printf '%d receipt(s) re-read, %d verdict(s) moved, $%s spent\n' "$TOTAL" "$MOVED" "$COST"
+rat_trace calibrate done "read=$TOTAL moved=$MOVED cost=\$$COST"
+
+if [ "$MOVED" = "0" ] && [ "$TOTAL" -gt 0 ]; then
+  echo "nothing moved: the rubric edit changed how it reads, not what it decides"
+elif [ "$APPLY" = "1" ]; then
+  echo "the new verdicts were written over the old ones"
+else
+  echo "the originals are untouched. re-run with --apply to keep the new reading"
+  echo "full output: ${RUN#"$RAT_ROOT"/}"
+fi

@@ -586,6 +586,111 @@ check "the patch holds only the loop's file" "grep -q 'loop-made.txt' '$INPLACE/
 git reset -q app.txt; git checkout -- app.txt 2>/dev/null; rm -f loop-made.txt
 rm -rf .claude/loops/_inplace
 
+section "rubric packs"
+printf 'diff --git a/src/app.py b/src/app.py\n+++ b/src/app.py\n' > /tmp/rat-py.patch
+printf 'diff --git a/bin/x.sh b/bin/x.sh\n+++ b/bin/x.sh\n' > /tmp/rat-sh.patch
+check "a python diff pulls the python pack"  "python3 bin/lib/rubrics.py .claude/loops/rubrics /tmp/rat-py.patch code | grep -q packs/python"
+check "and not the shell one"                "! python3 bin/lib/rubrics.py .claude/loops/rubrics /tmp/rat-py.patch code | grep -q packs/shell"
+check "a shell diff pulls the shell pack"    "python3 bin/lib/rubrics.py .claude/loops/rubrics /tmp/rat-sh.patch code | grep -q packs/shell"
+check "prose loops get no packs at all"      "! python3 bin/lib/rubrics.py .claude/loops/rubrics /tmp/rat-py.patch writing | grep -q packs/"
+
+section "two graders"
+mkdir -p .claude/loops/_argued
+printf -- '---\nname: _argued\nautonomy: report-only\nrubrics: [safety]\ntimeout: 60\n---\nreport\n' > .claude/loops/_argued/plan.md
+printf '#!/usr/bin/env bash\necho "a night worth arguing about"\n' > .claude/loops/_argued/act.sh
+chmod +x .claude/loops/_argued/act.sh
+cat > split-agent <<'EOF'
+#!/usr/bin/env python3
+import json, os, sys
+prompt = sys.stdin.read()
+if "grader" in prompt:
+    counter = "grader-count"
+    seen = int(open(counter).read()) if os.path.exists(counter) else 0
+    open(counter, "w").write(str(seen + 1))
+    answer = ('{"verdict":"pass","score":91,"notes":"it matches"}' if seen == 0
+              else '{"verdict":"fail","score":40,"notes":"it does not match"}')
+else:
+    answer = "**What I found** - a night worth arguing about."
+print(json.dumps({"result": answer, "total_cost_usd": 0.01}))
+EOF
+chmod +x split-agent
+cp .claude/loops/settings.json /tmp/rat-settings-real4.json
+python3 - <<'PY'
+import json
+p = ".claude/loops/settings.json"
+s = json.load(open(p))
+s["agent"] = {"command": "./split-agent", "args": [], "result_field": "result",
+              "cost_field": "total_cost_usd", "retries": 0}
+s["grading"] = {"mode": "auto", "graders": 2}
+json.dump(s, open(p, "w"), indent=2)
+PY
+rm -f grader-count
+bin/shift _argued >/dev/null 2>&1
+ARGUED="$(find state/receipts -type d -name '*_argued' | sort | tail -n 1)"
+check "both readings are kept"               "python3 -c \"
+import json
+g = json.load(open('$ARGUED/grade.json'))
+assert g['graders'] == 2, g
+assert len(g['each']) == 2, g
+\""
+check "disagreement is recorded as such"     "grep -q '\"agreement\": false' '$ARGUED/grade.json'"
+check "the harsher verdict wins"             "grep -q '\"verdict\": \"fail\"' '$ARGUED/grade.json'"
+check "the trace says they disagreed"        "grep -q 'status=disagreed' state/trace.log"
+check "and it becomes a queue"               "bin/rat receipts --disagreed 20 | grep -q _argued"
+check "the audit calls it out"               "bin/rat audit --days 1 | grep -q 'graders disagreed'"
+
+rm -f grader-count
+cat > agreeing-agent <<'EOF'
+#!/usr/bin/env python3
+import json, sys
+prompt = sys.stdin.read()
+answer = ('{"verdict":"pass","score":90,"notes":"it holds"}' if "grader" in prompt
+          else "**What I found** - a quiet night.")
+print(json.dumps({"result": answer, "total_cost_usd": 0.01}))
+EOF
+chmod +x agreeing-agent
+python3 - <<'PY'
+import json
+p = ".claude/loops/settings.json"
+s = json.load(open(p))
+s["agent"]["command"] = "./agreeing-agent"
+json.dump(s, open(p, "w"), indent=2)
+PY
+bin/shift _argued >/dev/null 2>&1
+RC=$?
+AGREED="$(find state/receipts -type d -name '*_argued' | sort | tail -n 1)"
+check "agreement passes the shift"           "test $RC -eq 0 && grep -q '\"agreement\": true' '$AGREED/grade.json'"
+
+section "calibrating a rubric"
+bin/rat calibrate --days 1 --limit 3 > /tmp/rat-calibrate.out 2>&1
+check "calibrate re-reads old receipts"      "grep -qE '[0-9]+ receipt\(s\) re-read' /tmp/rat-calibrate.out"
+check "it leaves the originals alone"        "grep -q 'originals are untouched' /tmp/rat-calibrate.out"
+check "and keeps its own working copy"       "test -d state/calibrations"
+cp /tmp/rat-settings-real4.json .claude/loops/settings.json
+rm -rf .claude/loops/_argued split-agent agreeing-agent grader-count
+
+section "memory that travels"
+REMOTE="$(mktemp -d)"
+git init -q --bare "$REMOTE/origin.git"
+git remote add origin "$REMOTE/origin.git" 2>/dev/null || git remote set-url origin "$REMOTE/origin.git"
+git add -A >/dev/null 2>&1
+git -c user.email=smoke@test -c user.name=smoke commit -qm "before pushing state" >/dev/null 2>&1
+git -c user.email=smoke@test -c user.name=smoke push -q origin HEAD:main 2>/dev/null
+git config user.email smoke@test
+git config user.name smoke
+bin/rat state push > /tmp/rat-state.out 2>&1
+check "the memory is pushed to a branch"     "grep -q 'pushed' /tmp/rat-state.out"
+SECOND="$(mktemp -d)"
+git clone -q "$REMOTE/origin.git" "$SECOND/repo" 2>/dev/null
+cp -R bin .claude CONTRACT.md kill.sh "$SECOND/repo/" 2>/dev/null
+mkdir -p "$SECOND/repo/state"
+( cd "$SECOND/repo" && bin/rat state pull > /tmp/rat-state-pull.out 2>&1 )
+check "a fresh checkout can take it back"    "grep -q 'pulled' /tmp/rat-state-pull.out"
+check "and it knows what already ran"        "test -f '$SECOND/repo/state/checkpoint.json'"
+check "the chain survives the trip"          "( cd '$SECOND/repo' && python3 bin/lib/audit.py state | grep -q 'chain holds' )"
+rm -rf "$REMOTE" "$SECOND"
+git remote remove origin 2>/dev/null || true
+
 section "the record can be checked"
 check "the trace lines are chained"       "grep -q ' h=[0-9a-f]' state/trace.log"
 check "audit says the chain holds"        "python3 bin/lib/audit.py state | grep -q 'the chain holds'"

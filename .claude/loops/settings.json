@@ -83,10 +83,14 @@
     ]
   },
   "grading": {
-    "mode": "auto"
+    "mode": "auto",
+    "graders": 1
   },
   "receipts": {
     "keep_days": 30,
     "keep_failed_days": 90
+  },
+  "state": {
+    "branch": "loop-rat-state"
   }
 }

@@ -1,11 +1,14 @@
-# One shift, on GitHub's schedule instead of your laptop's.
+# One shift, on GitHub's clock instead of your laptop's.
 #
-# Two things differ from a local run: the checkout is fresh, so a loop that
-# relies on a cursor gets it from the committed state or not at all; and the
-# runner has no credentials beyond the secrets you hand it here.
+# A runner is a fresh checkout every time, so the interesting part is not
+# running the shift - it is remembering. `bin/state pull` takes the checkpoint,
+# the ledger and the hash-chained trace off the state branch before the shift,
+# and `bin/state push` leaves them for the next run. Without that, `run-due`
+# thinks every loop is running for the first time, the daily spend cap resets
+# every run, and the chain restarts nightly, which is the same as not having one.
 #
-# It uploads the receipt as an artifact and opens nothing. Turning the result
-# into a PR is a decision, and decisions belong to you.
+# Receipts are uploaded as artifacts rather than committed: they are evidence,
+# not memory, and they are large.
 name: nightly shift
 
 on:
@@ -14,21 +17,26 @@ on:
   workflow_dispatch:
     inputs:
       loop:
-        description: which loop to run
-        default: digest
+        description: which loop to run (blank runs whatever is due)
+        default: ""
         type: string
       dry_run:
         description: run every phase with the model stubbed
         default: true
         type: boolean
 
+# Enough to read the repository and to write the state branch. Nothing else.
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: loop-rat-nightly
+  cancel-in-progress: false
 
 jobs:
   shift:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,30 +50,44 @@ jobs:
         if: ${{ inputs.dry_run != true }}
         run: npm install -g @anthropic-ai/claude-code
 
-      - name: check the setup
+      - name: check the setup before trusting it
         run: bin/rat doctor
+
+      - name: remember what the last run knew
+        run: |
+          git config user.name "loop rat"
+          git config user.email "loop-rat@users.noreply.github.com"
+          bin/rat state pull
 
       - name: run the shift
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          LOOP="${{ inputs.loop || 'digest' }}"
-          if [ "${{ inputs.dry_run || 'false' }}" = "true" ]; then
-            bin/shift "$LOOP" --dry-run
+          FLAGS=""
+          if [ "${{ inputs.dry_run || 'false' }}" = "true" ]; then FLAGS="--dry-run"; fi
+          if [ -n "${{ inputs.loop }}" ]; then
+            bin/shift "${{ inputs.loop }}" $FLAGS
           else
-            bin/shift "$LOOP"
+            bin/rat run-due $FLAGS
           fi
         continue-on-error: true
 
-      - name: the receipt
+      - name: read the receipts
         run: |
-          bin/rat receipts 5
-          bin/rat show
+          bin/rat receipts 10
+          bin/rat audit --days 7
+
+      - name: leave the memory for the next run
+        if: always()
+        run: bin/rat state push
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: receipt
+          name: receipts
           path: state/receipts/
           retention-days: 14
+
+      - name: fail the run if the record does not add up
+        run: bin/rat audit --days 7 --json > /dev/null

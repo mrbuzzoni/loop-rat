@@ -45,6 +45,11 @@ optional `at`, an hours `window`, `days`, and `enabled`. Both `bin/rat run-due`
 and `bin/rat cron` read this file, so the schedule cannot drift from the crontab
 you installed.
 
+**`.claude/loops/rubrics/packs/<language>.md`** - rubric packs. Added
+automatically when a shift's diff touches that language, and only when the loop
+is graded on `code`. A python fix gets python rules; a repository with no python
+never loads them.
+
 **`.claude/loops/rubrics/*.md`** - how work is graded. One file per kind of
 output. They are prompts, not code: the grader is a second agent with a fresh
 context that never sees itself as the author. `safety.md` is applied to every
@@ -115,6 +120,16 @@ and cleared, so a crashed shift cannot block its loop forever.
 
 **`bin/shift`** - one shift, end to end. Everything that must happen in order -
 lock, brief, act, verify, guard, grade, receipt - happens here and nowhere else.
+
+**`bin/grade`** - the reading step on its own, so `bin/calibrate` can repeat it
+later against rubrics that have since changed, through the same code path.
+
+**`bin/calibrate`** - re-reads old receipts with today's rubrics and shows which
+verdicts move.
+
+**`bin/state`** - carries the checkpoint, the ledger and the trace between
+machines on an orphan branch, so a schedule that runs on a fresh checkout still
+knows what already happened.
 
 **`bin/replay`** - sends a saved brief again and compares the two answers.
 

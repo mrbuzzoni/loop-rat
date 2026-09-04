@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# state - carry the harness's memory between machines, on a branch of its own.
+#
+#   bin/state pull [--branch NAME]     take the memory the last run left
+#   bin/state push [--branch NAME]     leave it for the next one
+#   bin/state show                     what is on the branch right now
+#
+# A shift in CI starts on a fresh checkout: no checkpoint, no ledger, no trace.
+# Without those, `run-due` thinks every loop is running for the first time, the
+# spend cap resets every run, and the hash chain restarts nightly - which is the
+# same as not having one.
+#
+# So the memory lives on an orphan branch (`loop-rat-state` by default) that
+# holds nothing but `state/`: the checkpoint, the ledger, the trace, the digests.
+# Receipts stay out of it - they are large, they are evidence rather than memory,
+# and CI keeps them as artifacts.
+#
+# It is a plain branch. `git log loop-rat-state` reads like a diary, and deleting
+# it costs you history, never the setup.
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+. "$HERE/lib/common.sh"
+
+BRANCH="$(rat_setting state.branch loop-rat-state)"
+CARRIED="checkpoint.json budget.json trace.log"
+
+COMMAND="${1:-}"
+[ $# -gt 0 ] && shift
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --branch) BRANCH="$2"; shift 2 ;;
+    *) rat_err "state: unknown argument $1"; exit 2 ;;
+  esac
+done
+
+git -C "$RAT_ROOT" rev-parse --git-dir >/dev/null 2>&1 || {
+  rat_err "not a git repository - there is nowhere to keep the memory"
+  exit 1
+}
+
+work_in_scratch() {
+  SCRATCH="$(mktemp -d)"
+  trap 'rm -rf "$SCRATCH"' EXIT
+}
+
+case "$COMMAND" in
+  pull)
+    if ! git -C "$RAT_ROOT" fetch --quiet origin "$BRANCH" 2>/dev/null; then
+      rat_say "no $BRANCH on the remote yet - starting with an empty memory"
+      exit 0
+    fi
+    work_in_scratch
+    git -C "$RAT_ROOT" archive "origin/$BRANCH" 2>/dev/null | tar -x -C "$SCRATCH" || {
+      rat_warn "could not read $BRANCH - starting with an empty memory"
+      exit 0
+    }
+    mkdir -p "$RAT_STATE_DIR"
+    pulled=0
+    for name in $CARRIED; do
+      if [ -f "$SCRATCH/state/$name" ]; then
+        cp "$SCRATCH/state/$name" "$RAT_STATE_DIR/$name"
+        pulled=$((pulled + 1))
+      fi
+    done
+    if [ -d "$SCRATCH/state/digest" ]; then
+      mkdir -p "$RAT_STATE_DIR/digest"
+      cp -R "$SCRATCH/state/digest/." "$RAT_STATE_DIR/digest/" 2>/dev/null || true
+    fi
+    rat_say "pulled $pulled file(s) of memory from $BRANCH"
+    ;;
+
+  push)
+    work_in_scratch
+    mkdir -p "$SCRATCH/state"
+    carried=0
+    for name in $CARRIED; do
+      if [ -f "$RAT_STATE_DIR/$name" ]; then
+        cp "$RAT_STATE_DIR/$name" "$SCRATCH/state/$name"
+        carried=$((carried + 1))
+      fi
+    done
+    [ -d "$RAT_STATE_DIR/digest" ] && cp -R "$RAT_STATE_DIR/digest" "$SCRATCH/state/" 2>/dev/null
+    if [ "$carried" = "0" ]; then
+      rat_say "no memory to push yet"
+      exit 0
+    fi
+
+    cat > "$SCRATCH/README.md" <<'BRANCH_README'
+# loop-rat-state
+
+The night shift's memory, and nothing else. Written by `bin/state push` after a
+run and read by `bin/state pull` before one, so a schedule that runs on a fresh
+checkout still knows what already happened.
+
+    state/checkpoint.json   where each loop stopped
+    state/budget.json       what has been spent, per day and per loop
+    state/trace.log         one hash-chained line per phase
+    state/digest/           the pages a person actually reads
+
+Receipts are not here. They are evidence rather than memory, they are large, and
+CI keeps them as build artifacts.
+
+Nothing on this branch is source. Delete it and the next run starts fresh - you
+lose the history, never the setup.
+BRANCH_README
+
+    (
+      cd "$SCRATCH" || exit 1
+      git init --quiet .
+      git config user.name "$(git -C "$RAT_ROOT" config user.name 2>/dev/null || echo 'loop rat')"
+      git config user.email "$(git -C "$RAT_ROOT" config user.email 2>/dev/null || echo '')"
+      git add -A
+      git -c commit.gpgsign=false commit --quiet \
+        -m "state after $(date -u +%Y-%m-%dT%H:%M:%SZ)" || exit 1
+      git push --quiet --force "$(git -C "$RAT_ROOT" remote get-url origin 2>/dev/null || echo "$RAT_ROOT")" \
+        "HEAD:refs/heads/$BRANCH"
+    ) || { rat_err "could not push the memory to $BRANCH"; exit 1; }
+
+    rat_say "pushed $carried file(s) of memory to $BRANCH"
+    rat_trace state pushed "branch=$BRANCH files=$carried"
+    ;;
+
+  show)
+    if git -C "$RAT_ROOT" rev-parse --verify --quiet "origin/$BRANCH" >/dev/null 2>&1; then
+      rat_say "origin/$BRANCH"
+      git -C "$RAT_ROOT" log --oneline -5 "origin/$BRANCH" 2>/dev/null | sed 's/^/  /'
+      git -C "$RAT_ROOT" ls-tree -r --name-only "origin/$BRANCH" 2>/dev/null | sed 's/^/  /'
+    else
+      rat_say "no $BRANCH yet - `bin/state push` creates it"
+    fi
+    ;;
+
+  *)
+    awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0"
+    exit 2
+    ;;
+esac

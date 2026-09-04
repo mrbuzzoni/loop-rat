@@ -102,6 +102,23 @@ The ceiling is two repairs no matter what a plan asks for. A third attempt at
 the same failure is not persistence - it is a loop that has stopped learning and
 started guessing, and guessing at 3am is how repositories get damaged.
 
+## Two readers, when the line is unclear
+
+```json
+"grading": { "mode": "auto", "graders": 2 }
+```
+
+One grader tells you whether the work holds. Two tell you something a single
+reading cannot: whether the rubric draws a line clearly enough that two careful
+readers land on the same side of it.
+
+Agreement is cheap and means little. Disagreement is the signal - it says the
+work sits exactly where your rubric is vague, which is the one place worth your
+morning. `rat receipts --disagreed` is that queue; `rat audit` counts it.
+
+It doubles the cost of grading, so turn it on for the loops that change things
+and leave it off for the ones that only report.
+
 ## Stop conditions that hold
 
 Write them as facts that become true, not as amounts of effort:

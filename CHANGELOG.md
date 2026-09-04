@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.9.0 - 2026-09-05
+
+The four things the roadmap still owed after 0.4 and 0.6.
+
+- **The schedule can run off your laptop.** `bin/rat state pull|push` carries the
+  checkpoint, the ledger, the hash-chained trace and the digests on an orphan
+  branch of their own. A CI runner is a fresh checkout every time, and without
+  that memory `run-due` thinks every loop is running for the first time, the
+  daily cap resets on every run, and the chain restarts nightly - which is the
+  same as not having one. `nightly.yml` now pulls, runs, pushes, and fails the
+  run when the record does not add up.
+- **Rubric packs per language, chosen by the diff.** A shift that touched `.py`
+  is read against `rubrics/packs/python.md` without anyone remembering to ask for
+  it; a shell repository never loads it. Packs extend `code.md`, so a loop graded
+  only on prose gets none. Three ship: python, shell, javascript.
+- **Two graders instead of one.** `grading.graders: 2` asks twice, independently.
+  Agreement is the verdict; disagreement records the harsher one, keeps both
+  readings, and puts the shift in a queue of its own - `rat receipts --disagreed`
+  and a section in `rat audit`. Two careful readings parting company is a
+  question about where the rubric draws its line, and that is worth a minute.
+- **`rat calibrate`** - re-read old receipts against the rubrics as they are
+  today and watch which verdicts move. A rubric is a prompt, so editing one is
+  editing behaviour you cannot otherwise see. Originals are untouched unless you
+  pass `--apply`.
+- Grading moved out of `bin/shift` into `bin/grade`, so calibration repeats the
+  real thing rather than an imitation of it.
+- 147 checks in the smoke test.
+
 ## 0.8.0 - 2026-09-03
 
 Everything here came from running the harness against a live model rather than

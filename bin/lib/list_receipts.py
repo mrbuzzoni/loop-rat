@@ -2,7 +2,7 @@
 """List receipts, filtered the way you actually look for them.
 
   list_receipts.py <receipts-dir> [--limit N] [--loop NAME] [--verdict V]
-                   [--since 3d|12h|30m] [--json]
+                   [--since 3d|12h|30m] [--disagreed] [--json]
 
 Defaults to the newest ten in a fixed-width table. `--json` prints an array
 instead, so a status bar or a monitoring check can read it without parsing
@@ -37,6 +37,14 @@ def load(root):
                 data = json.load(fh)
         except (OSError, ValueError):
             continue
+        grade_path = os.path.join(base, "grade.json")
+        data["_disagreed"] = False
+        if os.path.exists(grade_path):
+            try:
+                with open(grade_path, "r", encoding="utf-8") as gf:
+                    data["_disagreed"] = json.load(gf).get("agreement") is False
+            except (OSError, ValueError):
+                pass
         data["_dir"] = base
         data["_day"] = os.path.basename(os.path.dirname(base))
         data["_mtime"] = os.path.getmtime(path)
@@ -62,6 +70,7 @@ def main(argv):
     loop = opt("--loop")
     verdict = opt("--verdict")
     since = parse_since(opt("--since", "")) if opt("--since") else None
+    only_disagreed = "--disagreed" in args
     as_json = "--json" in args
 
     if not os.path.isdir(root):
@@ -79,6 +88,8 @@ def main(argv):
         rows = [r for r in rows if r.get("verdict") == verdict]
     if since:
         rows = [r for r in rows if now - r["_mtime"] <= since]
+    if only_disagreed:
+        rows = [r for r in rows if r.get("_disagreed")]
     rows = rows[:limit]
 
     if as_json:
@@ -86,6 +97,7 @@ def main(argv):
             row["path"] = os.path.relpath(row.pop("_dir"))
             row.pop("_mtime", None)
             row.pop("_day", None)
+            row["graders_disagreed"] = row.pop("_disagreed", False)
         print(json.dumps(rows, indent=2))
         return 0
 
@@ -94,10 +106,11 @@ def main(argv):
         return 0
 
     for row in rows:
-        print("%-11s %-14s %-13s %5ss  $%-8.4f %s" % (
+        print("%-11s %-14s %-13s %5ss  $%-8.4f %s%s" % (
             row["_day"], row.get("loop", ""), row.get("verdict", ""),
             row.get("duration_seconds", 0), float(row.get("cost_usd", 0) or 0),
-            os.path.basename(row["_dir"])))
+            os.path.basename(row["_dir"]),
+            "  graders disagreed" if row.get("_disagreed") else ""))
     return 0
 
 

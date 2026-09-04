@@ -96,6 +96,13 @@ def load_receipts(state_dir, days):
         except (OSError, ValueError):
             continue
         data["_path"] = os.path.relpath(base, home)
+        grade_path = os.path.join(base, "grade.json")
+        if os.path.exists(grade_path):
+            try:
+                with open(grade_path, "r", encoding="utf-8") as gf:
+                    data["_grade"] = json.load(gf)
+            except (OSError, ValueError):
+                pass
         rows.append(data)
     rows.sort(key=lambda r: r.get("started", ""))
     return rows
@@ -120,6 +127,9 @@ def main(argv):
     cost = sum(float(r.get("cost_usd", 0) or 0) for r in rows)
     needs_eyes = [r for r in rows
                   if r.get("verdict") in ("needs-review", "fail", "blocked", "interrupted")]
+    # Where two readers of the same work parted company. This is the queue worth
+    # a human minute: not the work that failed, but the work nobody agreed about.
+    disagreed = [r for r in rows if r.get("_grade", {}).get("agreement") is False]
 
     if as_json:
         print(json.dumps({
@@ -133,6 +143,7 @@ def main(argv):
             "days": days,
             "shifts": len(rows),
             "verdicts": verdicts,
+            "graders_disagreed": [r["_path"] for r in disagreed],
             "cost_usd": round(cost, 4),
         }, indent=2))
         return 0 if broken is None and not edited else 1
@@ -171,6 +182,17 @@ def main(argv):
     if interrupted:
         print("- %d shift(s) were stopped before they finished" % interrupted)
     print()
+
+    if disagreed:
+        print("## the graders disagreed")
+        print("- %d shift(s). Two readings parted company, which is a question "
+              "about the rubric as much as about the work." % len(disagreed))
+        for row in disagreed[-5:]:
+            grade = row.get("_grade", {})
+            print("- %s  %s  %s" % (row.get("started", "")[:16], row.get("loop", "?"),
+                                    " vs ".join(grade.get("verdicts", []))))
+            print("    %s" % row["_path"])
+        print()
 
     print("## still waiting on a person")
     if not needs_eyes:

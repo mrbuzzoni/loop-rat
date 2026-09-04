@@ -6,7 +6,8 @@
 #   rat run-due              run every loop the schedule says is due (cron uses this)
 #   rat status [--json]      last verdict per loop, today's spend, halt state
 #   rat receipts [n]         the last n receipts, newest first
-#                            filters: --loop NAME --verdict V --since 3d --json
+#                            filters: --loop NAME --verdict V --since 3d
+#                                     --disagreed --json
 #   rat show [receipt]       read one receipt in full (--diff opens the patch first)
 #   rat trace [n]            tail the trace log
 #   rat watch [loop]         follow a running shift, phase by phase, until it ends
@@ -16,6 +17,8 @@
 #   rat new <name>           scaffold a new loop from the template
 #   rat add <pack|path>      install a loop someone else already ran (--list to browse)
 #   rat cron                 print crontab lines for the current schedule
+#   rat state pull|push      carry the memory between machines, on its own branch
+#   rat calibrate [--days N] re-read old receipts against today's rubrics
 #   rat audit [--days N]     is the record intact, and what still needs a person
 #   rat doctor               check the setup before you trust it overnight
 #   rat resume               clear the halt file left by kill.sh
@@ -29,7 +32,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 . "$HERE/lib/common.sh"
 
-RAT_VERSION="0.8.0"
+RAT_VERSION="0.9.0"
 SCHEDULE="$RAT_LOOPS_DIR/schedule.yml"
 SCHED_PY="$RAT_ROOT/bin/lib/schedule.py"
 
@@ -122,7 +125,7 @@ cmd_receipts() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --loop|--verdict|--since) passthrough="$passthrough $1 $2"; shift 2 ;;
-      --json) passthrough="$passthrough --json"; shift ;;
+      --json|--disagreed) passthrough="$passthrough $1"; shift ;;
       -*) rat_err "receipts: unknown flag $1"; return 2 ;;
       *) limit="$1"; shift ;;
     esac
@@ -468,6 +471,8 @@ case "${1:-}" in
   replay)    shift; "$RAT_ROOT/bin/replay" "$@" ;;
   apply)     shift; cmd_apply "$@" ;;
   cron)      shift; rat_py "$SCHED_PY" cron "$SCHEDULE" "$RAT_ROOT" ;;
+  state)     shift; "$RAT_ROOT/bin/state" "$@" ;;
+  calibrate) shift; "$RAT_ROOT/bin/calibrate" "$@" ;;
   audit)     shift; rat_py "$RAT_ROOT/bin/lib/audit.py" "$RAT_STATE_DIR" "$@" ;;
   doctor)    shift; cmd_doctor "$@" ;;
   resume)    shift; cmd_resume "$@" ;;

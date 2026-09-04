@@ -123,7 +123,15 @@ the repository.
 
 **grade** hands the output to a second agent with a fresh context and the
 rubrics. An agent grading its own shift always finds it excellent, which is why
-the grader never sees itself as the author.
+the grader never sees itself as the author. Which rubrics is decided by what the
+diff touched: a python change is read against the python pack without anyone
+remembering to ask, and a shell repository never sees it.
+
+Set `grading.graders: 2` and two readers answer independently. If they agree,
+that is the verdict. If they do not, the harsher one is recorded, both readings
+are kept, and the shift lands in a queue of its own - because two careful
+readings parting company is a question about where the rubric draws the line,
+and that question is worth a minute of yours.
 
 **receipt** writes `receipt.json`, appends one line per phase to `trace.log`, and
 updates the checkpoint so tomorrow's shift knows where this one stopped. Each
@@ -149,7 +157,9 @@ bin/rat replay         # ask the same brief again, and compare the two answers
 bin/rat apply          # apply the patch a shift produced, after you read it
 bin/rat add --list     # loops other people already ran, ready to install
 bin/rat prune          # age out old receipts, once you have too many
+bin/rat receipts --disagreed   # the shifts two graders could not agree on
 bin/rat audit          # is the record intact, and what still needs a person
+bin/rat calibrate      # re-read old receipts against today's rubrics
 bin/rat doctor         # validate the machine and the configuration
 ```
 
@@ -188,6 +198,47 @@ all.
 They are examples, not the product. The shape is the product: a plan that names a
 stop condition, an `act.sh` that gathers before it asks, a rubric that grades,
 a receipt at the end.
+
+### Editing a rubric is editing behaviour
+
+A rubric is a prompt. Changing one changes every verdict that comes after, and
+you find out weeks later. So change it, then look:
+
+```bash
+bin/rat calibrate --days 14
+```
+
+```
+DATE        LOOP           WAS           NOW           MOVED
+2026-09-02  test-mender    pass          needs-review  <-- moved
+2026-09-01  test-mender    pass          pass
+2026-08-31  pr-hunter      needs-review  needs-review
+
+3 receipt(s) re-read, 1 verdict(s) moved, $0.61 spent
+```
+
+The originals are untouched; `--apply` is how the new reading replaces the old
+one, and it should be rare. A change that moves nothing was decoration. A change
+that moves everything was not the change you thought you were making.
+
+### The schedule can live somewhere else
+
+A CI runner is a fresh checkout every time, which is the whole difficulty: with
+no checkpoint, `run-due` thinks every loop is running for the first time, the
+daily cap resets on every run, and the hash chain restarts nightly.
+
+So the memory travels on a branch of its own:
+
+```bash
+bin/rat state pull     # what the last run knew
+bin/rat state push     # leave it for the next one
+bin/rat state show     # what is on the branch
+```
+
+It carries the checkpoint, the ledger, the trace and the digests - and not the
+receipts, which are evidence rather than memory and are kept as CI artifacts.
+[.github/workflows/nightly.yml](.github/workflows/nightly.yml) does the pull, the
+shift and the push in that order, and fails the run if the chain does not add up.
 
 ### The record is checkable
 
