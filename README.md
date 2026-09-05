@@ -511,8 +511,11 @@ names the platform and says what is missing before you trust a schedule to it.
 
 ## Requirements
 
-- bash 3.2 or newer (stock macOS is fine), python 3 under any of `python3`,
-  `python` or `py`, and git
+- bash 3.2 or newer - stock macOS is fine, and CI runs the suite there so the
+  claim stays true
+- python 3.8 or newer, under any of `python3`, `python` or `py`. Standard
+  library only; there is nothing to install
+- git
 - an agent CLI on your PATH. The default is `claude`, configured under `agent` in
   `settings.json`. Anything that takes a prompt on stdin and returns JSON works -
   change `command`, `args`, and the two field names.
@@ -529,7 +532,7 @@ With no CLI installed, every shift runs as a dry run and says so in the receipt.
 tests/smoke.sh
 ```
 
-50 checks against a scratch copy of the harness: the parsers, the scheduling
+187 checks against a scratch copy of the harness: the parsers, the scheduling
 rules, a full shift, the guard blocking a denied path and an oversized diff, the
 lock refusing to overlap, the ledger refusing a spent day and refusing the next
 model call, eight concurrent writers losing no spend, the kill switch, the

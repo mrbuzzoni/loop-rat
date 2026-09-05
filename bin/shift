@@ -82,21 +82,24 @@ rat_number() {
   esac
 }
 
-TIMEOUT="$(rat_number "$(rat_py "$RAT_CONF" fm-get "$PLAN" timeout 2>/dev/null || true)" \
+# Read the plan once, in this shell, for the same reason the settings are.
+rat_plan_load "$PLAN"
+
+TIMEOUT="$(rat_number "$(rat_plan "$PLAN" timeout 2>/dev/null || true)" \
   "$(rat_setting caps.timeout_seconds 900)" timeout)"
-MAX_USD="$(rat_number "$(rat_py "$RAT_CONF" fm-get "$PLAN" max_usd 2>/dev/null || true)" \
+MAX_USD="$(rat_number "$(rat_plan "$PLAN" max_usd 2>/dev/null || true)" \
   "$(rat_setting caps.max_usd_per_shift 1.00)" max_usd)"
 DAY_CAP="$(rat_setting caps.max_usd_per_day 5.00)"
-RUBRICS="$(rat_py "$RAT_CONF" fm-get "$PLAN" rubrics 2>/dev/null | tr -d '[]"' | tr ',' ' ' || true)"
-AUTONOMY="$(rat_py "$RAT_CONF" fm-get "$PLAN" autonomy 2>/dev/null || true)"
+RUBRICS="$(rat_plan "$PLAN" rubrics 2>/dev/null || true)"
+AUTONOMY="$(rat_plan "$PLAN" autonomy 2>/dev/null || true)"
 [ -n "$AUTONOMY" ] || AUTONOMY="report-only"
 export RAT_AUTONOMY="$AUTONOMY"
-VERIFY_CMD="$(rat_py "$RAT_CONF" fm-get "$PLAN" verify 2>/dev/null || true)"
-USE_WORKTREE="$(rat_py "$RAT_CONF" fm-get "$PLAN" worktree 2>/dev/null || true)"
-MODEL="$(rat_py "$RAT_CONF" fm-get "$PLAN" model 2>/dev/null || true)"
+VERIFY_CMD="$(rat_plan "$PLAN" verify 2>/dev/null || true)"
+USE_WORKTREE="$(rat_plan "$PLAN" worktree 2>/dev/null || true)"
+MODEL="$(rat_plan "$PLAN" model 2>/dev/null || true)"
 [ -n "$MODEL" ] || MODEL="$(rat_setting agent.model '')"
 export RAT_MODEL="$MODEL"
-REPAIR_LIMIT="$(rat_number "$(rat_py "$RAT_CONF" fm-get "$PLAN" repair 2>/dev/null || true)" 0 repair)"
+REPAIR_LIMIT="$(rat_number "$(rat_plan "$PLAN" repair 2>/dev/null || true)" 0 repair)"
 # Two is the ceiling whatever a plan asks for. A third attempt at the same
 # failure is not persistence, it is a loop that has stopped learning.
 [ "$REPAIR_LIMIT" -gt 2 ] 2>/dev/null && REPAIR_LIMIT=2

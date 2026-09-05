@@ -9,7 +9,7 @@ a dry run does not get written. Anything that removes a brake is not a feature.
 Shipped work lives in [CHANGELOG.md](CHANGELOG.md); this file is only the part
 that has not happened yet.
 
-## Standing today - v0.11.1
+## Standing today - v0.11.2
 
 - the contract: rules committed, personal overrides gitignored
 - the guard, the caps, `kill.sh`: denylist, blast radius, spend ledger, halt file
@@ -21,7 +21,7 @@ that has not happened yet.
 - rubric packs per language, two graders when you want them, and `rat calibrate`
 - memory that travels on its own branch, so the schedule can leave the laptop
 - receipts and grading: one folder per shift, graded by a second agent
-- five loops, four packs, 186 checks, no services
+- five loops, four packs, 187 checks, no services
 
 ## 0.4 - read the night faster - shipped
 

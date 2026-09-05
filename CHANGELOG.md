@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.11.2 - 2026-09-05
+
+An audit pass: no new features, several things that were slow or untrue.
+
+- **A dry shift went from 6.8 seconds to 2.8.** It was spawning 101 python
+  processes to answer 101 questions about the same two files. Settings and plan
+  front matter are now read once each, into the shell, and exported so a child
+  process inherits the answers. The bug underneath was a familiar one: the cache
+  was being filled inside `$( )`, and a subshell cannot hand a variable back to
+  its parent, so every "cached" lookup was a fresh interpreter.
+- **The README claimed "50 checks"** where the suite runs 187. There is now a
+  test that reads the number out of the README and fails if it drifts from the
+  number of checks in the suite.
+- **CI checks the floor the README claims** rather than the version that happens
+  to be newest: python 3.8 and 3.12 on Linux, and macOS for its stock bash 3.2.
+  Verified locally too - the whole suite passes under bash 3.2.
+- Confirmed by trying rather than by reading: a repository path containing a
+  space, a directory that is not a git repository, a git repository with no
+  commits, a plan with no front matter at all, and a shift whose output contains
+  escape codes, null bytes and five-thousand-character lines. All handled; none
+  needed a change.
+- 187 checks in the smoke test.
+
 ## 0.11.1 - 2026-09-05
 
 - **Fixed: a relative `agent.command` broke every isolated loop.** `./my-agent`

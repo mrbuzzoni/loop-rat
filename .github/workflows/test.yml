@@ -13,19 +13,34 @@ permissions:
 jobs:
   smoke:
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # macOS runs stock bash 3.2, which is the floor the harness claims.
+        # The oldest python is here so the claim in the README is checked by a
+        # machine rather than by memory.
+        include:
+          - os: ubuntu-latest
+            python: "3.8"
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: macos-latest
+            python: "3.12"
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
+      - name: which shell and which python
+        run: |
+          bash --version | head -1
+          python3 --version
+
       - name: smoke
         run: tests/smoke.sh
       - name: shellcheck
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         run: |
           sudo apt-get update -qq && sudo apt-get install -y shellcheck
           shellcheck -S warning bin/rat bin/shift bin/rat-agent kill.sh install.sh \

@@ -27,23 +27,27 @@ RAT_CONF="$RAT_ROOT/bin/lib/conf.py"
 
 # Windows installs Python as `python`; most everywhere else it is `python3`, and
 # on a few machines `python` is still a 2.x. Ask, once, rather than assuming.
-rat_python() {
-  if [ -n "${RAT_PYTHON:-}" ]; then printf '%s' "$RAT_PYTHON"; return 0; fi
+# Answered once, here, rather than inside a function that everything calls from
+# a `$( )` - a subshell cannot hand a variable back to its parent, so a cache
+# filled in one is a cache refilled every single time.
+rat_python_detect() {
+  [ -n "${RAT_PYTHON:-}" ] && return 0
   local candidate
   for candidate in python3 python py; do
     if command -v "$candidate" >/dev/null 2>&1 &&
        "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info[0] == 3 else 1)' 2>/dev/null; then
       RAT_PYTHON="$candidate"
       export RAT_PYTHON
-      printf '%s' "$RAT_PYTHON"
       return 0
     fi
   done
-  printf 'python3'
+  RAT_PYTHON="python3"
+  export RAT_PYTHON
   return 1
 }
 
-rat_py() { "$(rat_python)" "$@"; }
+rat_python() { printf '%s' "${RAT_PYTHON:-python3}"; }
+rat_py() { "${RAT_PYTHON:-python3}" "$@"; }
 
 # msys and cygwin are how a Windows machine usually gets here: Git Bash. WSL
 # reports linux and needs nothing special.
@@ -67,12 +71,46 @@ rat_say()  { printf '%s%s%s\n' "$(rat_color 2)" "$1" "$(rat_color 0)"; }
 rat_warn() { printf '%s%s%s\n' "$(rat_color 33)" "$1" "$(rat_color 0)" >&2; }
 rat_err()  { printf '%s%s%s\n' "$(rat_color 31)" "$1" "$(rat_color 0)" >&2; }
 
+# Every setting, read once, into shell variables. A shift asks for two dozen of
+# them, and a python process per question was most of what a dry run spent its
+# time doing.
+rat_settings_load() {
+  [ "${RAT_SETTINGS_LOADED:-}" = "$RAT_SETTINGS" ] && return 0
+  local dump
+  dump="$(rat_py "$RAT_ROOT/bin/lib/flatten.py" json "$RAT_SETTINGS" RAT_S_ 2>/dev/null)" || dump=""
+  eval "$dump"
+  RAT_SETTINGS_LOADED="$RAT_SETTINGS"
+  export RAT_SETTINGS_LOADED
+}
+
 # settings.json lookup with a default: rat_setting caps.timeout_seconds 900
 rat_setting() {
   local key="$1"
   local fallback="${2:-}"
-  local value
-  value="$(rat_py "$RAT_CONF" get "$RAT_SETTINGS" "$key" 2>/dev/null || true)"
+  [ "${RAT_SETTINGS_LOADED:-}" = "$RAT_SETTINGS" ] || rat_settings_load
+  local name="RAT_S_$(printf '%s' "$key" | tr -c 'A-Za-z0-9' '_')"
+  local value="${!name:-}"
+  if [ -z "$value" ]; then printf '%s' "$fallback"; else printf '%s' "$value"; fi
+}
+
+# The same trick for a plan's front matter, which a shift reads eight times.
+rat_plan_load() {
+  local plan="$1"
+  [ "${RAT_PLAN_LOADED:-}" = "$plan" ] && return 0
+  local dump
+  dump="$(rat_py "$RAT_ROOT/bin/lib/flatten.py" front-matter "$plan" RAT_P_ 2>/dev/null)" || dump=""
+  eval "$dump"
+  RAT_PLAN_LOADED="$plan"
+  export RAT_PLAN_LOADED
+}
+
+rat_plan() {
+  local plan="$1"
+  local key="$2"
+  local fallback="${3:-}"
+  rat_plan_load "$plan"
+  local name="RAT_P_$(printf '%s' "$key" | tr -c 'A-Za-z0-9' '_')"
+  local value="${!name:-}"
   if [ -z "$value" ]; then printf '%s' "$fallback"; else printf '%s' "$value"; fi
 }
 
@@ -320,3 +358,9 @@ rat_json_field() {
   local fallback="${3:-}"
   rat_py "$RAT_CONF" get "$file" "$key" 2>/dev/null || printf '%s' "$fallback"
 }
+
+# Read the machine and the settings once, at the moment this file is sourced, so
+# that every subshell below inherits the answers instead of working them out
+# again.
+rat_python_detect
+rat_settings_load

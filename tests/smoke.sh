@@ -588,6 +588,14 @@ git reset -q app.txt; git checkout -- app.txt 2>/dev/null; rm -f loop-made.txt
 rm -rf .claude/loops/_inplace
 
 section "the demos are honest"
+check "the readme's check count is true"   "python3 -c \"
+import re
+readme = open('$SRC/README.md').read()
+claimed = int(re.search(r'(\\d+) checks against a scratch copy', readme).group(1))
+suite = open('$SRC/tests/smoke.sh').read()
+run = len(re.findall(r'^check \\\"', suite, re.M))
+assert abs(claimed - run) <= 2, 'readme says %d, the suite runs %d' % (claimed, run)
+\""
 check "every gif the readme shows exists"  "python3 -c \"
 import re, os, sys
 readme = open('$SRC/README.md').read() if os.path.exists('$SRC/README.md') else ''
