@@ -362,9 +362,26 @@ printf -- '---\nname: _slowpoke\nautonomy: report-only\nrubrics: []\ntimeout: 12
 printf '#!/usr/bin/env bash\necho "the long part"\nsleep 60\n' > .claude/loops/_slowpoke/act.sh
 chmod +x .claude/loops/_slowpoke/act.sh
 ( bin/shift _slowpoke --dry-run >/dev/null 2>&1 & )
-sleep 3
+# Waiting a fixed three seconds assumes a machine as fast as this one. A loaded
+# CI runner is not, and the kill would then land before the shift was ready to
+# be interrupted - killing nothing and leaving no receipt to look at. So wait
+# for the shift to say it has started working. The lock is too early a signal:
+# it is taken before the interrupt handler is installed.
+WAITED=0
+until grep -lq 'the long part' state/receipts/*/*_slowpoke/output.md 2>/dev/null \
+   || [ "$WAITED" -ge 30 ]; do
+  sleep 1
+  WAITED=$((WAITED + 1))
+done
 ./kill.sh "smoke: the interrupt path" >/dev/null 2>&1
-sleep 3
+# The folder appears when the shift starts; the receipt inside it only when the
+# shift is over. Wait for the file, not the folder.
+WAITED=0
+until [ -n "$(find state/receipts -name receipt.json -path '*_slowpoke*' 2>/dev/null)" ] \
+   || [ "$WAITED" -ge 30 ]; do
+  sleep 1
+  WAITED=$((WAITED + 1))
+done
 SLOW_RECEIPT="$(find state/receipts -type d -name '*_slowpoke' | sort | tail -n 1)"
 check "an interrupted shift leaves a receipt" "test -f '$SLOW_RECEIPT/receipt.json'"
 check "and it is marked interrupted"          "grep -q '\"verdict\": \"interrupted\"' '$SLOW_RECEIPT/receipt.json'"
@@ -892,6 +909,30 @@ check "and it knows what already ran"        "test -f '$SECOND/repo/state/checkp
 check "the chain survives the trip"          "( cd '$SECOND/repo' && python3 bin/lib/audit.py state | grep -q 'chain holds' )"
 rm -rf "$REMOTE" "$SECOND"
 git remote remove origin 2>/dev/null || true
+
+section "two shifts in one second"
+# Receipt folders are named by the clock, and the clock here counts whole
+# seconds. A dry shift finishes in less than one, so the second run of a loop
+# can arrive while the first one's folder still has the same name. Landing on
+# top of it would leave the trace holding a hash of a receipt that had since
+# been overwritten - and the audit would call that tampering.
+mkdir -p .claude/loops/_twice
+printf -- '---\nname: _twice\nautonomy: report-only\nrubrics: []\ntimeout: 30\n---\nquick\n' > .claude/loops/_twice/plan.md
+printf '#!/usr/bin/env bash\necho quick\n' > .claude/loops/_twice/act.sh
+chmod +x .claude/loops/_twice/act.sh
+# Earlier sections deliberately use up the day's budget and halt the harness.
+# This one needs three shifts that actually run, so give it a clean day.
+rm -f state/budget.json
+bin/rat resume >/dev/null 2>&1
+TAKEN="state/receipts/$(date +%Y-%m-%d)/$(date +%H%M%S)-_twice"
+mkdir -p "$TAKEN"
+bin/shift _twice --dry-run >/dev/null 2>&1
+check "a taken folder is not written into" "test ! -f '$TAKEN/receipt.json'"
+bin/shift _twice --dry-run >/dev/null 2>&1
+bin/shift _twice --dry-run >/dev/null 2>&1
+check "every shift keeps its own receipt"  "N=\$(find state/receipts -name receipt.json -path '*_twice*' | wc -l | tr -d ' '); [ \"\$N\" = 3 ] || { echo \"kept \$N receipt(s), wanted 3\"; false; }"
+check "and no receipt looks tampered with" "python3 bin/lib/audit.py state >/dev/null"
+rm -rf .claude/loops/_twice
 
 section "the record can be checked"
 check "the trace lines are chained"       "grep -q ' h=[0-9a-f]' state/trace.log"

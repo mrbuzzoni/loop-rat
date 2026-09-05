@@ -256,6 +256,31 @@ rat_lock() {
 
 rat_unlock() { rm -rf "$RAT_STATE_DIR/locks/$1.lock"; }
 
+# Receipt folders are named by the clock, and the clock here counts whole
+# seconds. A dry shift finishes in less than one, so the second run of a loop
+# can ask for a name the first run already has. Writing over it would leave the
+# trace holding the hash of a receipt that no longer exists on disk, and `rat
+# audit` would report that as tampering. So the second one takes a letter.
+rat_receipt_dir() {
+  local label="$1"
+  local second
+  second="$(date +%H%M%S)"
+  local day
+  day="$(rat_today)"
+  local letters='bcdefghijklmnopqrstuvwxyz'
+  local nth=0
+  RAT_SHIFT_ID="$second"
+  RAT_RECEIPT="$RAT_STATE_DIR/receipts/$day/$RAT_SHIFT_ID-$label"
+  while [ -e "$RAT_RECEIPT" ] && [ "$nth" -lt 25 ]; do
+    RAT_SHIFT_ID="$second${letters:$nth:1}"
+    RAT_RECEIPT="$RAT_STATE_DIR/receipts/$day/$RAT_SHIFT_ID-$label"
+    nth=$((nth + 1))
+  done
+  export RAT_SHIFT_ID
+  export RAT_RECEIPT
+  mkdir -p "$RAT_RECEIPT"
+}
+
 # Short-lived mutual exclusion for the files two loops can write at the same
 # moment - the ledger and the checkpoint. Waits a few seconds, then gives up and
 # writes anyway: losing one cost entry is better than losing a whole shift.

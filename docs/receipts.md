@@ -43,6 +43,11 @@ bin/rat show state/receipts/2026-09-02/040012-test-mender
 
 ## Reading one receipt
 
+A folder is named for the day, the time of day, and the loop:
+`state/receipts/2026-09-02/040012-test-mender`. Two shifts of one loop can start
+inside the same second - a dry run finishes in less than one - so the second one
+gets a letter after the time (`040012b`) rather than writing over the first.
+
 `receipt.json` first. Verdict, duration, cost, and three statuses:
 
 ```json

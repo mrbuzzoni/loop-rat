@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.11.3 - 2026-09-06
+
+The first CI run on Linux found a bug that only a fast machine can hit.
+
+- **Fixed: two shifts of one loop in the same second shared a receipt folder.**
+  Folders are named by the clock and the clock counts whole seconds, so the
+  second shift wrote over the first while the trace still held the first one's
+  hash - and `rat audit` reported a receipt that no longer matched its record.
+  A tamper alarm with nothing behind it, which is the worst kind to have in a
+  system whose whole claim is that the record can be trusted. The second shift
+  now takes a letter (`040012b`). Nothing was ever lost on a real schedule,
+  where shifts are minutes apart; it took a dry run finishing in under a second
+  to surface it.
+- **The interrupt test waited three seconds and hoped.** On a loaded runner the
+  kill arrived before the shift was ready to be interrupted, so there was
+  nothing to interrupt and no receipt to read. It now waits for the shift to
+  report that it has started working, and for the receipt to appear.
+- 190 checks in the smoke test, three of them new: a taken folder is not written
+  into, every shift keeps its own receipt, and no receipt looks tampered with
+  afterwards.
+
 ## 0.11.2 - 2026-09-05
 
 An audit pass: no new features, several things that were slow or untrue.

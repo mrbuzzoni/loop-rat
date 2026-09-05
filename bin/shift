@@ -174,11 +174,7 @@ on_interrupt() {
 trap 'on_interrupt INT' INT
 trap 'on_interrupt TERM' TERM
 
-RAT_SHIFT_ID="$(date +%H%M%S)"
-export RAT_SHIFT_ID
-RAT_RECEIPT="$RAT_STATE_DIR/receipts/$(rat_today)/$RAT_SHIFT_ID-$RAT_LOOP"
-export RAT_RECEIPT
-mkdir -p "$RAT_RECEIPT"
+rat_receipt_dir "$RAT_LOOP"
 STARTED_EPOCH="$(rat_epoch)"
 STARTED_ISO="$(rat_now_iso)"
 

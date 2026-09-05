@@ -49,11 +49,7 @@ if rat_halted; then
   exit 75
 fi
 
-RAT_SHIFT_ID="$(date +%H%M%S)"
-export RAT_SHIFT_ID
-RAT_RECEIPT="$RAT_STATE_DIR/receipts/$(rat_today)/$RAT_SHIFT_ID-$RAT_LOOP-replay"
-export RAT_RECEIPT
-mkdir -p "$RAT_RECEIPT"
+rat_receipt_dir "$RAT_LOOP-replay"
 cp "$SOURCE/prompt.md" "$RAT_RECEIPT/prompt.md"
 
 STARTED_EPOCH="$(rat_epoch)"
