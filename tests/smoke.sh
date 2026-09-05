@@ -587,6 +587,16 @@ check "the patch holds only the loop's file" "grep -q 'loop-made.txt' '$INPLACE/
 git reset -q app.txt; git checkout -- app.txt 2>/dev/null; rm -f loop-made.txt
 rm -rf .claude/loops/_inplace
 
+section "the demos are honest"
+check "every gif the readme shows exists"  "python3 -c \"
+import re, os, sys
+readme = open('$SRC/README.md').read() if os.path.exists('$SRC/README.md') else ''
+missing = [m for m in re.findall(r'docs/assets/(\S+?\.gif)', readme)
+           if not os.path.exists(os.path.join('$SRC', 'docs/assets', m))]
+assert not missing, missing
+\""
+check "and no absolute path is baked in"   "! grep -rl 'Users/' '$SRC/docs/assets' 2>/dev/null | grep -q ."
+
 section "awkward input"
 bin/shift "bad name" --dry-run >/dev/null 2>&1
 RC=$?

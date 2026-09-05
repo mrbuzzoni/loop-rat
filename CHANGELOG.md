@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.11.1 - 2026-09-05
+
+- **Fixed: a relative `agent.command` broke every isolated loop.** `./my-agent`
+  was resolved against wherever the shift happened to be standing, and a
+  `worktree: true` loop stands in a throwaway checkout where that file does not
+  exist - so the call silently never happened. Relative commands now resolve
+  against the harness. Found while recording the README demos, which is a fair
+  argument for recording them.
+- Three more demonstrations in the README, each next to the thing it shows: the
+  morning read (status, receipts, the patch, applying it), the guard blocking a
+  report-only loop that wrote a file, and the hash chain breaking under an edit
+  and holding again afterwards.
+- The README now says plainly what the guard does not do: it blocks the verdict,
+  not the keystroke. Making a write impossible rather than reported is what
+  `worktree: true` is for.
+- 186 checks in the smoke test, two of which keep the README's demonstrations
+  honest: every image it references exists, and none has a path from the machine
+  it was recorded on baked into it.
+
 ## 0.11.0 - 2026-09-05
 
 - **Windows.** WSL always worked; Git Bash now does too. Python is found under

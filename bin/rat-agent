@@ -38,6 +38,12 @@ mkdir -p "$OUT_DIR"
 RAW="$OUT_DIR/agent-$TAG.json"
 
 AGENT_CMD="$(rat_setting agent.command claude)"
+# A relative command is relative to the harness, not to wherever this shift
+# happens to be standing - a worktree shift runs `act.sh` from a throwaway
+# checkout, and `./my-agent` would not be there.
+case "$AGENT_CMD" in
+  ./*|../*) AGENT_CMD="$RAT_ROOT/${AGENT_CMD#./}" ;;
+esac
 MODEL_FLAG="$(rat_setting agent.model_flag --model)"
 RESULT_FIELD="$(rat_setting agent.result_field result)"
 COST_FIELD="$(rat_setting agent.cost_field total_cost_usd)"

@@ -9,7 +9,7 @@ what it did with a second agent, and leaves a dated receipt you read in the
 morning.
 
 <p align="center">
-  <img src="docs/assets/demo.gif" alt="rat init, a dry-run shift, and the receipt it left" width="760">
+  <img src="docs/assets/demo.gif" alt="rat init, a dry-run shift, and the receipt it left" width="680">
 </p>
 
 Not a framework, not a wrapper around the model. A dozen files of bash and
@@ -165,6 +165,12 @@ A shift stopped by hand or by `kill.sh` still gets all of that: the receipt is
 marked `interrupted` and says which phase it was cut off in. A night you cannot
 reconstruct is worse than a night that failed.
 
+Which makes the morning short:
+
+<p align="center">
+  <img src="docs/assets/morning.gif" alt="rat status, the receipts, the patch, and applying it" width="680">
+</p>
+
 Read it back:
 
 ```bash
@@ -314,6 +320,10 @@ at exactly that point:
   outside the harness
 ```
 
+<p align="center">
+  <img src="docs/assets/audit.gif" alt="the chain holding, breaking under an edit, and holding again" width="680">
+</p>
+
 That matters most for the one reader the system cannot vouch for: an agent with
 write access to the same disk. `rat audit` exits non-zero when something does not
 add up, so a monitoring check can watch it, and it closes with what still needs a
@@ -367,6 +377,16 @@ A `report-only` loop that writes a file is blocked even when the change would
 have been correct, because it said it would not and then did. An unknown level
 is treated as the strictest one, so a typo in a plan can never widen what a loop
 may do. The limits per level live in `settings.json`.
+
+<p align="center">
+  <img src="docs/assets/guard.gif" alt="a report-only loop writing a file, and the guard blocking the shift" width="680">
+</p>
+
+Note what the guard does and does not do: it blocks the **verdict**, not the
+keystroke. The write already happened, and putting the file back is a
+`git checkout` you make knowingly. To make the write impossible rather than
+merely reported, give the loop `worktree: true` and it never touches your tree
+at all.
 
 Start every loop at `report-only` and leave it there for a week of receipts you
 actually read. [docs/loop-design.md](docs/loop-design.md) is the rest of that
