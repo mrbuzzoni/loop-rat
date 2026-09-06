@@ -75,12 +75,15 @@ rat_err()  { printf '%s%s%s\n' "$(rat_color 31)" "$1" "$(rat_color 0)" >&2; }
 # them, and a python process per question was most of what a dry run spent its
 # time doing.
 rat_settings_load() {
-  [ "${RAT_SETTINGS_LOADED:-}" = "$RAT_SETTINGS" ] && return 0
+  [ "${RAT_SETTINGS_LOADED:-}" = "$RAT_SETTINGS" ] && return "${RAT_SETTINGS_OK:-0}"
   local dump
-  dump="$(rat_py "$RAT_ROOT/bin/lib/flatten.py" json "$RAT_SETTINGS" RAT_S_ 2>/dev/null)" || dump=""
+  RAT_SETTINGS_OK=0
+  dump="$(rat_py "$RAT_ROOT/bin/lib/flatten.py" json "$RAT_SETTINGS" RAT_S_ 2>/dev/null)" \
+    || RAT_SETTINGS_OK=1
   eval "$dump"
   RAT_SETTINGS_LOADED="$RAT_SETTINGS"
-  export RAT_SETTINGS_LOADED
+  export RAT_SETTINGS_LOADED RAT_SETTINGS_OK
+  return "$RAT_SETTINGS_OK"
 }
 
 # settings.json lookup with a default: rat_setting caps.timeout_seconds 900
@@ -310,8 +313,12 @@ rat_with_lock() {
 # On a subscription the dollar figure a CLI reports is notional - what you
 # actually spend is calls against your own quota, and a schedule that eats it is
 # a schedule you turn off. So the ledger counts both.
-rat_calls_today() {
-  rat_py - "$RAT_BUDGET" "$(rat_today)" <<'PY'
+# Both numbers a preflight needs, from one read of one file. They used to be two
+# functions, and a python interpreter costs more to start than the file costs to
+# read.
+rat_budget_read() {
+  local pair
+  pair="$(rat_py - "$RAT_BUDGET" "$(rat_today)" <<'PY'
 import json, os, sys
 path, day = sys.argv[1], sys.argv[2]
 data = {}
@@ -321,26 +328,41 @@ if os.path.exists(path):
             data = json.load(fh)
     except ValueError:
         data = {}
-print(int(data.get("calls", {}).get(day, 0)))
+print("%.4f %d" % (float(data.get("days", {}).get(day, 0.0)),
+                   int(data.get("calls", {}).get(day, 0))))
 PY
+)"
+  RAT_SPENT_TODAY="${pair%% *}"
+  RAT_CALLS_TODAY="${pair##* }"
+  [ -n "$RAT_SPENT_TODAY" ] || RAT_SPENT_TODAY="0.0000"
+  [ -n "$RAT_CALLS_TODAY" ] || RAT_CALLS_TODAY=0
+}
+
+rat_calls_today() { rat_budget_read; printf '%s' "$RAT_CALLS_TODAY"; }
+
+# Money compared without starting an interpreter. Bash has no decimals, so both
+# sides are scaled to whole ten-thousandths of a dollar first - which is finer
+# than any price this harness deals in.
+rat_ten_thousandths() {
+  local n="${1:-0}"
+  n="${n#+}"
+  case "$n" in *.*) : ;; *) n="$n.0" ;; esac
+  local whole="${n%%.*}"
+  local frac="${n#*.}0000"
+  frac="${frac%"${frac#????}"}"
+  whole="${whole:-0}"
+  case "$whole$frac" in *[!0-9]*) printf '0'; return 0 ;; esac
+  printf '%s' "$(( 10#$whole * 10000 + 10#$frac ))"
+}
+
+# rat_ge 1.50 1.4999 -> true. Used for budget caps.
+rat_ge() {
+  [ "$(rat_ten_thousandths "$1")" -ge "$(rat_ten_thousandths "$2")" ]
 }
 
 # Spend ledger, one bucket per day. Refuses to start a shift once the day's cap
 # is gone - the cheapest way to stop a runaway loop is to run out of allowance.
-rat_budget_today() {
-  rat_py - "$RAT_BUDGET" "$(rat_today)" <<'PY'
-import json, os, sys
-path, day = sys.argv[1], sys.argv[2]
-data = {}
-if os.path.exists(path):
-    try:
-        with open(path) as fh:
-            data = json.load(fh)
-    except ValueError:
-        data = {}
-print("%.4f" % float(data.get("days", {}).get(day, 0.0)))
-PY
-}
+rat_budget_today() { rat_budget_read; printf '%s' "$RAT_SPENT_TODAY"; }
 
 rat_budget_add() {
   local amount="$1"
@@ -382,6 +404,33 @@ rat_json_field() {
   local key="$2"
   local fallback="${3:-}"
   rat_py "$RAT_CONF" get "$file" "$key" 2>/dev/null || printf '%s' "$fallback"
+}
+
+# Every key of a small json file at once, as $<prefix><key>. For a file a shift
+# reads two or three answers out of, that is one interpreter instead of three.
+# Print a markdown file with one "## Heading" section left out - the section
+# only, not everything below it. Used to keep the grader's score bands out of
+# the worker's prompt. Done in the shell because it runs on every shift and a
+# python interpreter costs more to start than this file costs to read.
+rat_md_without() {
+  local file="$1"
+  local heading="$2"
+  local skipping=0
+  local line
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "$heading") skipping=1; continue ;;
+      "## "*)     skipping=0 ;;
+    esac
+    [ "$skipping" = 1 ] || printf '%s\n' "$line"
+  done < "$file"
+}
+
+rat_json_load() {
+  local file="$1"
+  local prefix="$2"
+  [ -f "$file" ] || return 1
+  eval "$(rat_py "$RAT_ROOT/bin/lib/flatten.py" json "$file" "$prefix" 2>/dev/null)"
 }
 
 # Read the machine and the settings once, at the moment this file is sourced, so

@@ -56,9 +56,16 @@ gets a letter after the time (`040012b`) rather than writing over the first.
   "verify": { "status": "pass", "command": "npm test --silent" },
   "guard":  { "status": "ok",   "files_changed": 2 },
   "verdict": "needs-review",
-  "cost_usd": 0.19
+  "cost_usd": 0.19,
+  "prompt_bytes": { "act": 8194, "grade": 5815 }
 }
 ```
+
+`prompt_bytes` is what the shift sent, in bytes. It is not a token count -
+nothing here can count tokens honestly - but it is the number that moves when a
+prompt grows, and on a flat subscription it is the only handle you have on why
+one loop feels more expensive than another. A loop whose prompt doubles between
+Monday and Friday has picked up something it does not need.
 
 `act ok` means the script finished. `verify pass` means the repository agreed.
 `guard ok` means nothing forbidden was touched. The verdict is the grader's, and

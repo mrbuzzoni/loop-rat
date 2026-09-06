@@ -34,6 +34,21 @@ receipt = {
     "cost_usd": float(env["RAT_COST"] or 0),
     "dry_run": env.get("RAT_DRY_RUN", "0") == "1",
 }
+
+
+def sent(name):
+    try:
+        return os.path.getsize(os.path.join(env["RAT_RECEIPT"], name))
+    except OSError:
+        return 0
+
+
+# What the shift sent to the model, in bytes. Not tokens - nothing here can
+# count tokens honestly - but it is the number that moves when a prompt grows,
+# it is free to measure, and it is the only handle most people have on why a
+# loop costs what it costs.
+receipt["prompt_bytes"] = {"act": sent("prompt.md"), "grade": sent("grade-prompt.md")}
+
 if env.get("RAT_REPLAY_OF"):
     receipt["replay_of"] = env["RAT_REPLAY_OF"]
 with open(os.path.join(env["RAT_RECEIPT"], "receipt.json"), "w") as fh:

@@ -78,8 +78,7 @@ PY
 # that asks the model twice cannot walk past its ceiling on the second question.
 if [ -n "${RAT_MAX_USD:-}" ] && [ -d "$OUT_DIR" ]; then
   SPENT_THIS_SHIFT="$(rat_py "$RAT_ROOT/bin/lib/sum_cost.py" "$OUT_DIR")"
-  if rat_py -c 'import sys; sys.exit(0 if float(sys.argv[1]) >= float(sys.argv[2]) else 1)' \
-       "$SPENT_THIS_SHIFT" "$RAT_MAX_USD"; then
+  if rat_ge "$SPENT_THIS_SHIFT" "$RAT_MAX_USD"; then
     rat_err "rat-agent: this shift has spent \$$SPENT_THIS_SHIFT of its \$$RAT_MAX_USD cap"
     printf '**The shift hit its spend cap.**\n\n$%s of $%s used before this call.\n' \
       "$SPENT_THIS_SHIFT" "$RAT_MAX_USD"

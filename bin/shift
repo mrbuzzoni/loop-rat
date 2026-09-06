@@ -46,7 +46,7 @@ ACT="$LOOP_DIR/act.sh"
 # Without readable settings there is no denylist, no blast radius and no spend
 # cap - every brake in the system reads from this file. A shift that runs anyway
 # is a shift running with the brakes disconnected.
-if ! rat_py -c 'import json,sys; json.load(open(sys.argv[1]))' "$RAT_SETTINGS" 2>/dev/null; then
+if ! rat_settings_load; then
   rat_err "settings.json does not parse - refusing to run with no caps and no denylist"
   rat_err "check it with: bin/rat doctor"
   rat_trace preflight failed "reason=settings-unreadable"
@@ -104,8 +104,9 @@ REPAIR_LIMIT="$(rat_number "$(rat_plan "$PLAN" repair 2>/dev/null || true)" 0 re
 # failure is not persistence, it is a loop that has stopped learning.
 [ "$REPAIR_LIMIT" -gt 2 ] 2>/dev/null && REPAIR_LIMIT=2
 
-SPENT_TODAY="$(rat_budget_today)"
-if rat_py -c "import sys; sys.exit(0 if float(sys.argv[1]) >= float(sys.argv[2]) else 1)" "$SPENT_TODAY" "$DAY_CAP"; then
+rat_budget_read
+SPENT_TODAY="$RAT_SPENT_TODAY"
+if rat_ge "$SPENT_TODAY" "$DAY_CAP"; then
   rat_warn "daily budget spent ($SPENT_TODAY of $DAY_CAP) - not starting a shift"
   rat_trace preflight skipped "reason=budget spent=$SPENT_TODAY cap=$DAY_CAP"
   exit 75
@@ -116,7 +117,8 @@ fi
 # once you know why, which is a decision rather than a default.
 BREAKER="$(rat_setting caps.pause_after_failures 3)"
 if [ "${BREAKER:-0}" != "0" ] && [ -f "$RAT_CHECKPOINT" ]; then
-  FAILURES="$(rat_json_field "$RAT_CHECKPOINT" "loops.$RAT_LOOP.consecutive_failures" 0)"
+  LAST_STOP="$(rat_json_field "$RAT_CHECKPOINT" "loops.$RAT_LOOP" '{}')"
+  FAILURES="$(printf '%s' "$LAST_STOP" | sed -n 's/.*"consecutive_failures"[^0-9]*\([0-9][0-9]*\).*/\1/p')"
   if [ "${FAILURES:-0}" -ge "$BREAKER" ]; then
     rat_warn "$RAT_LOOP has failed $FAILURES times in a row - it is paused"
     rat_warn "read the last receipt, then: bin/rat resume $RAT_LOOP"
@@ -127,7 +129,7 @@ fi
 
 CALL_CAP="$(rat_setting caps.max_calls_per_day 0)"
 if [ "${CALL_CAP:-0}" != "0" ]; then
-  CALLS_TODAY="$(rat_calls_today)"
+  CALLS_TODAY="$RAT_CALLS_TODAY"
   if [ "$CALLS_TODAY" -ge "$CALL_CAP" ]; then
     rat_warn "today's $CALL_CAP calls are used ($CALLS_TODAY made) - not starting a shift"
     rat_trace preflight skipped "reason=calls used=$CALLS_TODAY cap=$CALL_CAP"
@@ -185,7 +187,7 @@ rat_trace preflight ok "autonomy=$AUTONOMY model=${MODEL:-default} timeout=${TIM
   echo "# Shift brief: $RAT_LOOP"
   echo
   echo "Shift id: $RAT_SHIFT_ID   started: $STARTED_ISO"
-  echo "Receipt folder: $RAT_RECEIPT"
+  echo "Receipt folder: ${RAT_RECEIPT#"$RAT_ROOT"/}"
   echo
   echo "## Your autonomy this shift: $AUTONOMY"
   echo
@@ -219,7 +221,7 @@ rat_trace preflight ok "autonomy=$AUTONOMY model=${MODEL:-default} timeout=${TIM
       echo
       echo "## You will be graded against rubrics/$rubric.md"
       echo
-      cat "$RAT_LOOPS_DIR/rubrics/$rubric.md"
+      rat_md_without "$RAT_LOOPS_DIR/rubrics/$rubric.md" "## Verdict"
     fi
   done
   if [ -f "$RAT_CHECKPOINT" ]; then
@@ -227,7 +229,8 @@ rat_trace preflight ok "autonomy=$AUTONOMY model=${MODEL:-default} timeout=${TIM
     echo "## Where the last shift stopped"
     echo
     echo '```json'
-    rat_py "$RAT_CONF" get "$RAT_CHECKPOINT" "loops.$RAT_LOOP" 2>/dev/null || echo '{}'
+    [ -n "$LAST_STOP" ] || LAST_STOP='{}'
+    printf '%s\n' "$LAST_STOP"
     echo '```'
   fi
   echo
@@ -425,8 +428,9 @@ elif [ -n "$RUBRICS" ] && [ "$GRADE_MODE" != "off" ]; then
   VERDICT="$("$RAT_ROOT/bin/grade" "$RAT_RECEIPT" \
     --plan "$PLAN" --rubrics "$RUBRICS" 2>>"$RAT_RECEIPT/stderr.log")"
   [ -n "$VERDICT" ] || VERDICT="needs-review"
+  rat_json_load "$RAT_RECEIPT/grade.json" RAT_G_
   rat_trace grade "$VERDICT" \
-    "score=$(rat_json_field "$RAT_RECEIPT/grade.json" score -) graders=$(rat_json_field "$RAT_RECEIPT/grade.json" graders 1)"
+    "score=${RAT_G_score:--} graders=${RAT_G_graders:-1}"
 else
   VERDICT="pass"
 fi

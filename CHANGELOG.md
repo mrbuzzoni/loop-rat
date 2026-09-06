@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.11.4 - 2026-09-06
+
+Less of everything: fewer processes started, fewer bytes sent, and two bugs in
+the code that did the trimming.
+
+- **Eight fewer process starts per shift** (36 to 28; python 29 to 21). The
+  ledger is read once for both numbers a preflight needs instead of twice.
+  Money is compared in the shell now - bash has no decimals, so both sides are
+  scaled to whole ten-thousandths of a dollar - where it used to start an
+  interpreter to compare two floats, three times a shift. Settings are parsed
+  once by the loader rather than once more to check they parse. The checkpoint
+  and the grade file are each read once instead of twice and three times. At a
+  measured 70ms per python start on this machine that is about half a second of
+  work removed; wall-clock varies too much between runs to claim a percentage.
+- **The score bands no longer go to the worker.** A rubric's `## Verdict`
+  section says how a grader turns a reading into a verdict. Sending it to the
+  agent doing the work taught it the scoring function, which is both a waste of
+  every shift's tokens and an invitation to write for the score. The grader
+  still gets the whole file. The act prompt lost 880 bytes, about 10%.
+- **The receipt now records `prompt_bytes`** - what the shift actually sent, act
+  and grade separately. Not a token count, but the number that moves when a
+  prompt grows, and free to measure.
+- Fixed, in the trimming itself: dropping a section with `sed` deleted
+  everything below it, so a rubric that put its score bands in the middle would
+  have lost its blocking rules on the way to the worker - the one part it must
+  never lose. And `${VAR:-{\}}` does not expand to `{}` in bash; the backslash
+  survives, and the prompt carried broken json for any loop the checkpoint had
+  not seen before.
+- The prompt no longer spends a line on the absolute path of the receipt folder.
+- 207 checks in the smoke test, seventeen of them new.
+
 ## 0.11.3 - 2026-09-06
 
 The first CI run on Linux found a bug that only a fast machine can hit.

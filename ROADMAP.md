@@ -21,7 +21,7 @@ that has not happened yet.
 - rubric packs per language, two graders when you want them, and `rat calibrate`
 - memory that travels on its own branch, so the schedule can leave the laptop
 - receipts and grading: one folder per shift, graded by a second agent
-- five loops, four packs, 190 checks, no services
+- five loops, four packs, 207 checks, no services
 
 ## 0.4 - read the night faster - shipped
 

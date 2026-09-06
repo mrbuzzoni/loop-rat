@@ -710,6 +710,43 @@ check "and a quiet one stays quiet"        "test ! -f notified.txt"
 cp /tmp/rat-settings-real6.json .claude/loops/settings.json
 rm -f notified.txt
 
+section "counting money without an interpreter"
+# The budget brake compares dollars, and bash has no decimals. Getting this
+# wrong in the permissive direction means a runaway loop never stops, so it is
+# worth more than the two lines of code it takes.
+money() { bash -c ". bin/lib/common.sh; rat_ge \"$1\" \"$2\" && echo ge || echo lt"; }
+check "an empty day is under any cap"      "test \"$(money 0.0000 12.0)\" = lt"
+check "exactly the cap counts as spent"    "test \"$(money 12.0 12.0)\" = ge"
+check "a ten-thousandth is not rounded off" "test \"$(money 1.4999 1.5)\" = lt"
+check "and neither is the one above it"    "test \"$(money 1.5 1.4999)\" = ge"
+check "whole dollars compare too"          "test \"$(money 3 2.9999)\" = ge"
+check "a leading zero is not octal"        "test \"$(money 0.0800 0.0900)\" = lt"
+# A cap that is not a number must stop the loop, not wave it through.
+check "nonsense in the cap stops the shift" "test \"$(money 0.0 abc)\" = ge"
+check "and the two ledger numbers come together" "bash -c '. bin/lib/common.sh; rat_budget_read; printf \"%s %s\" \"\$RAT_SPENT_TODAY\" \"\$RAT_CALLS_TODAY\"' | grep -qE '^[0-9][0-9.]* [0-9][0-9]*$'"
+
+section "what the prompt costs"
+# Everything in the prompt is paid for on every shift, so what goes in has to
+# earn its place - and the score bands are the grader's business, not the
+# worker's. A worker told exactly how it is scored writes for the score.
+bin/shift digest --dry-run >/dev/null 2>&1
+LAST="$(find state/receipts -type d -name '*-digest' | sort | tail -n 1)"
+check "the act prompt carries the rubric"   "grep -q 'graded against rubrics/writing.md' '$LAST/prompt.md'"
+check "but not its score bands"             "! grep -q '^## Verdict' '$LAST/prompt.md'"
+check "the grader still gets them"          "grep -q '^## Verdict' '$LAST/grade-prompt.md'"
+check "the receipt says what was sent"      "grep -q '\"prompt_bytes\"' '$LAST/receipt.json'"
+check "and the number is the real one"      "python3 -c \"import json,os,sys; d=json.load(open('$LAST/receipt.json')); sys.exit(0 if d['prompt_bytes']['act'] == os.path.getsize('$LAST/prompt.md') else 1)\""
+check "no machine paths are paid for"       "! grep -q '$PWD' '$LAST/prompt.md'"
+# ${VAR:-{\}} does not expand to {} in bash - the backslash survives. That put
+# broken json in the prompt for any loop the checkpoint had not seen yet.
+check "the resume note is not broken json" "! grep -q '{\\\\}' '$LAST/prompt.md'"
+# Dropping a section must drop the section, not everything under it. A rubric
+# that puts its score bands in the middle would otherwise lose its blocking
+# rules on the way to the worker - the one part it must never lose.
+printf '# R\n\nintro\n\n## Verdict\n\nbands\n\n## Blocking\n\nnever do this\n' > /tmp/rat-odd-rubric.md
+check "a section is dropped, not the tail"  "bash -c '. bin/lib/common.sh; rat_md_without /tmp/rat-odd-rubric.md \"## Verdict\"' | grep -q 'never do this'"
+check "and the section itself is gone"      "! bash -c '. bin/lib/common.sh; rat_md_without /tmp/rat-odd-rubric.md \"## Verdict\"' | grep -q bands"
+
 section "paying for it"
 mkdir -p state/scratch
 cat > echo-agent <<'EOF'
