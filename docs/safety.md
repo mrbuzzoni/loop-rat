@@ -16,9 +16,19 @@ shift exits immediately with code 75 and writes a line to the trace.
 bin/rat resume        # removes it
 ```
 
-`kill.sh` sends SIGTERM to the running shift and its children, waits, then
-SIGKILL, and clears the lock. It never deletes work: the receipt of the killed
-shift stays where it was.
+`kill.sh` sends SIGTERM to the running shift and every process under it, then
+waits for the shift to go before forcing anything. A shift that has been asked
+to stop still has a receipt to write, and writing one takes a handful of
+processes; the wait is what makes "nothing was thrown away" true rather than
+hopeful. It clears the lock either way, and says which of the two happened:
+
+```
+stopped digest (pid 4131) after 1s - its receipt was written
+killed digest (pid 4131) - it did not stop in 15s, so there may be no receipt
+```
+
+`caps.kill_grace_seconds` sets that wait, 15 seconds by default. Lower it only
+if you would rather lose the receipt than wait.
 
 A panic button you are afraid to press is not a panic button, so this one is
 reversible and leaves evidence. Press it early.

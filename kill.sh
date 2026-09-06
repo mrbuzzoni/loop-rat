@@ -27,10 +27,28 @@ if [ -d "$RAT_STATE_DIR/locks" ]; then
     name="$(basename "$lock" .lock)"
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
       rat_kill_tree "$pid" TERM
-      sleep 2
-      rat_kill_tree "$pid" KILL
+      # A shift that has been asked to stop still has a receipt to write, and
+      # writing one takes a handful of processes. A flat two seconds was a guess
+      # that held on a quiet laptop and failed on a loaded machine, where the
+      # hard kill landed first and threw away the very thing the line below
+      # promises was kept. Wait for the shift to go, and force it only if it
+      # will not.
+      grace="$(rat_setting caps.kill_grace_seconds 15)"
+      case "$grace" in ''|*[!0-9]*) grace=15 ;; esac
+      waited=0
+      while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt "$grace" ]; do
+        sleep 1
+        waited=$((waited + 1))
+      done
+      if kill -0 "$pid" 2>/dev/null; then
+        rat_kill_tree "$pid" KILL
+        printf 'killed %s (pid %s) - it did not stop in %ss, so there may be no receipt\n' \
+          "$name" "$pid" "$grace"
+      else
+        printf 'stopped %s (pid %s) after %ss - its receipt was written\n' \
+          "$name" "$pid" "$waited"
+      fi
       killed=$((killed + 1))
-      printf 'killed %s (pid %s)\n' "$name" "$pid"
     fi
     rm -rf "$lock"
   done

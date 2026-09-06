@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.11.5 - 2026-09-06
+
+The kill switch was throwing away the receipt it promises to keep.
+
+- **Fixed: `kill.sh` waited two seconds and then forced the issue.** A shift
+  that has been asked to stop still has a receipt to write, and writing one
+  takes a handful of processes. Two seconds held on a quiet laptop; on a loaded
+  CI runner the hard kill landed first, and the shift left a folder with nothing
+  in it - no receipt, no line in the trace saying it had been cut. The file that
+  prints "nothing was thrown away" was throwing away the evidence. It now waits
+  for the shift to go (`caps.kill_grace_seconds`, 15 by default) and forces it
+  only if it will not, and it says which of the two happened. Reproduced by
+  setting the grace to zero: no receipt, no trace line. At fifteen, the shift
+  needed one second.
+- **Fixed: the kill reached the children and stopped there.** `pkill -P` does
+  not walk the tree, so a `sleep` inside a script inside a shift outlived the
+  panic button and turned up later as an orphaned process. It now signals every
+  descendant, deepest first - which is also why the interrupted shift now gets
+  to run its handler promptly.
+- The interrupt test no longer waits a fixed three seconds and hope; it waits
+  for the shift to say it has started, and prints what the kill switch said,
+  what the trace holds and what is in the receipt folder when it fails.
+- 209 checks in the smoke test.
+
 ## 0.11.4 - 2026-09-06
 
 Less of everything: fewer processes started, fewer bytes sent, and two bugs in

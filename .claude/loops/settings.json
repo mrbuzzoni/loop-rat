@@ -35,7 +35,8 @@
     "timeout_seconds": 1200,
     "max_files_changed": 10,
     "max_calls_per_day": 12,
-    "pause_after_failures": 3
+    "pause_after_failures": 3,
+    "kill_grace_seconds": 15
   },
   "guard": {
     "scan_secrets": true,

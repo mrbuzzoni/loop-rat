@@ -532,7 +532,7 @@ With no CLI installed, every shift runs as a dry run and says so in the receipt.
 tests/smoke.sh
 ```
 
-207 checks against a scratch copy of the harness: the parsers, the scheduling
+209 checks against a scratch copy of the harness: the parsers, the scheduling
 rules, a full shift, the guard blocking a denied path and an oversized diff, the
 lock refusing to overlap, the ledger refusing a spent day and refusing the next
 model call, eight concurrent writers losing no spend, the kill switch, the

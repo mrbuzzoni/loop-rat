@@ -373,7 +373,7 @@ until grep -lq 'the long part' state/receipts/*/*_slowpoke/output.md 2>/dev/null
   sleep 1
   WAITED=$((WAITED + 1))
 done
-./kill.sh "smoke: the interrupt path" >/dev/null 2>&1
+./kill.sh "smoke: the interrupt path" > /tmp/rat-kill.out 2>&1
 # The folder appears when the shift starts; the receipt inside it only when the
 # shift is over. Wait for the file, not the folder.
 WAITED=0
@@ -383,10 +383,35 @@ until [ -n "$(find state/receipts -name receipt.json -path '*_slowpoke*' 2>/dev/
   WAITED=$((WAITED + 1))
 done
 SLOW_RECEIPT="$(find state/receipts -type d -name '*_slowpoke' | sort | tail -n 1)"
-check "an interrupted shift leaves a receipt" "test -f '$SLOW_RECEIPT/receipt.json'"
+check "an interrupted shift leaves a receipt" "test -f '$SLOW_RECEIPT/receipt.json' || { echo '-- what kill.sh said:'; cat /tmp/rat-kill.out; echo '-- last trace lines:'; tail -n 4 state/trace.log; echo '-- in the receipt folder:'; ls -a '$SLOW_RECEIPT'; false; }"
+check "and the kill switch waited for it"    "grep -q 'its receipt was written' /tmp/rat-kill.out"
 check "and it is marked interrupted"          "grep -q '\"verdict\": \"interrupted\"' '$SLOW_RECEIPT/receipt.json'"
 check "the trace says where it was cut"       "grep -q 'status=interrupted' state/trace.log"
 check "the lock was released"                 "test ! -d state/locks/_slowpoke.lock"
+# With no grace at all the hard kill lands first and the receipt is lost. That
+# is a legitimate setting for someone who wants the machine quiet immediately -
+# but the harness has to say so rather than repeat its usual reassurance.
+cp .claude/loops/settings.json /tmp/rat-settings-grace.json
+python3 - <<'GRACE'
+import json
+p = ".claude/loops/settings.json"
+d = json.load(open(p))
+d.setdefault("caps", {})["kill_grace_seconds"] = 0
+json.dump(d, open(p, "w"), indent=2)
+GRACE
+# The kill switch above left a HALT behind, and a halted harness starts nothing.
+bin/rat resume >/dev/null 2>&1
+SLOW_SEEN="$(find state/receipts -name output.md -path '*_slowpoke*' | wc -l | tr -d ' ')"
+( bin/shift _slowpoke --dry-run >/dev/null 2>&1 & )
+WAITED=0
+until [ "$(find state/receipts -name output.md -path '*_slowpoke*' | wc -l | tr -d ' ')" \
+        -gt "$SLOW_SEEN" ] || [ "$WAITED" -ge 30 ]; do
+  sleep 1
+  WAITED=$((WAITED + 1))
+done
+./kill.sh "smoke: no grace at all" > /tmp/rat-kill-nograce.out 2>&1
+check "no grace means it says so"             "grep -q 'there may be no receipt' /tmp/rat-kill-nograce.out"
+cp /tmp/rat-settings-grace.json .claude/loops/settings.json
 bin/rat resume >/dev/null 2>&1
 rm -rf .claude/loops/_slowpoke
 
@@ -651,14 +676,19 @@ cp /tmp/rat-settings-real7.json .claude/loops/settings.json
 section "wherever this is running"
 check "python 3 is found by some name"     "bash -c '. bin/lib/common.sh; rat_python >/dev/null && rat_py -c \"import sys; raise SystemExit(0 if sys.version_info[0]==3 else 1)\"'"
 check "the platform is named"              "bash -c '. bin/lib/common.sh; rat_os' | grep -qE 'macos|linux|windows|unknown'"
+# Killing the top of the tree is easy. The bug worth a test is the grandchild
+# that keeps running afterwards - a sleep inside a script inside a shift.
 check "a process tree can be killed"       "bash -c '
 . bin/lib/common.sh
 bash -c \"sleep 25 & sleep 25; wait\" &
 PARENT=\$!
 sleep 1
+KIDS=\"\$(rat_descendants \"\$PARENT\")\"
+[ -n \"\$KIDS\" ] || exit 1
 rat_kill_tree \"\$PARENT\" KILL
 sleep 1
-! kill -0 \"\$PARENT\" 2>/dev/null'"
+for p in \$PARENT \$KIDS; do kill -0 \"\$p\" 2>/dev/null && exit 1; done
+exit 0'"
 check "cron output exists for unix"        "python3 bin/lib/schedule.py cron .claude/loops/schedule.yml \"\$PWD\" --cron | grep -q 'run-due'"
 check "and for windows"                    "python3 bin/lib/schedule.py cron .claude/loops/schedule.yml \"\$PWD\" --windows | grep -q schtasks"
 check "the windows wrapper avoids quoting" "python3 bin/lib/schedule.py cron .claude/loops/schedule.yml \"\$PWD\" --windows | grep -q 'loop-rat.cmd'"

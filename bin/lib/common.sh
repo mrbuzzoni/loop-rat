@@ -188,12 +188,31 @@ rat_run_timeout() {
 # There is no portable way to do this: pkill knows about parents on unix,
 # taskkill knows about trees on Windows, and Git Bash has neither pkill nor a
 # usable process group. So: try each, in the order most likely to work here.
+# Every descendant of a pid, deepest first, so that a child is signalled before
+# the parent that would otherwise be asked to wait for it.
+rat_descendants() {
+  local parent="$1"
+  local child
+  for child in $(pgrep -P "$parent" 2>/dev/null); do
+    rat_descendants "$child"
+    printf '%s\n' "$child"
+  done
+}
+
 rat_kill_tree() {
   local pid="$1"
   local signal="${2:-TERM}"
   [ -n "$pid" ] || return 0
 
-  if command -v pkill >/dev/null 2>&1; then
+  if command -v pgrep >/dev/null 2>&1; then
+    # `pkill -P` reaches the children and stops there, so a shift's
+    # grandchildren - the sleep inside the script inside the shift - outlived
+    # the kill switch and turned up later as orphaned processes.
+    local descendant
+    for descendant in $(rat_descendants "$pid"); do
+      kill "-$signal" "$descendant" 2>/dev/null || true
+    done
+  elif command -v pkill >/dev/null 2>&1; then
     pkill "-$signal" -P "$pid" 2>/dev/null || true
   elif command -v taskkill >/dev/null 2>&1; then
     # /T takes the whole tree, which is what the unix branch approximates.
